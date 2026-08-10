@@ -1,0 +1,25 @@
+.web
+.states
+# Secrets
+.env
+
+# Local output data
+output/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+build/
+dist/
+wheels/
+*.egg-info/
+*.db
+
+# Virtual environments
+.venv/
+
+# Reflex-generated files
+.web/
+.states/
+reflex.lock/
+assets/external/
