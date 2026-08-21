@@ -26,10 +26,13 @@ OUTPUT_DIR = BASE_DIR / "output"
 TIMEOUT_SECONDS = 30
 
 CSV_HEADERS = [
+    "Org assessment id",
+    "Org assessment title",
     "User id",
     "Category",
     "Sub category",
     "Description",
+    "Creation datetime",
     "Question id",
     "Question type",
     "Question text",
@@ -88,8 +91,19 @@ def parse_creation_datetime(value: str) -> datetime | None:
     cleaned = cleaned.replace("a.m.", "AM").replace("p.m.", "PM")
     cleaned = cleaned.replace("a.m", "AM").replace("p.m", "PM")
     cleaned = cleaned.replace("A.M.", "AM").replace("P.M.", "PM")
+    # Django admin often renders abbreviated months with a trailing dot: "Aug. 20, 2026"
+    cleaned = re.sub(
+        r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.",
+        r"\1",
+        cleaned,
+    )
 
-    for fmt in ("%B %d, %Y, %I:%M %p", "%B %d, %Y, %I %p"):
+    for fmt in (
+        "%B %d, %Y, %I:%M %p",
+        "%B %d, %Y, %I %p",
+        "%b %d, %Y, %I:%M %p",
+        "%b %d, %Y, %I %p",
+    ):
         try:
             return datetime.strptime(cleaned, fmt)
         except ValueError:
@@ -202,15 +216,27 @@ def get_text_from_cell(row: Tag, class_name: str, tag_name: str) -> str:
     return cell.get_text(" ", strip=True) if isinstance(cell, Tag) else ""
 
 
-def extract_question_id(metadata_text: str) -> str:
+def parse_metadata(metadata_text: str) -> dict[str, str]:
     if not metadata_text.strip():
-        return ""
+        return {"question_id": "", "org_assessment_title": ""}
 
     try:
-        return str(json.loads(metadata_text).get("question_id", "")).strip()
+        data = json.loads(metadata_text)
+        return {
+            "question_id": str(data.get("question_id", "") or "").strip(),
+            "org_assessment_title": str(
+                data.get("org_assessment_title", "") or ""
+            ).strip(),
+        }
     except json.JSONDecodeError:
-        match = re.search(r'"question_id"\s*:\s*"([^"]+)"', metadata_text)
-        return match.group(1).strip() if match else ""
+        question_match = re.search(r'"question_id"\s*:\s*"([^"]+)"', metadata_text)
+        title_match = re.search(
+            r'"org_assessment_title"\s*:\s*"([^"]+)"', metadata_text
+        )
+        return {
+            "question_id": question_match.group(1).strip() if question_match else "",
+            "org_assessment_title": title_match.group(1).strip() if title_match else "",
+        }
 
 
 def extract_rows_from_container(container: Tag) -> list[dict[str, str]]:
@@ -227,7 +253,14 @@ def extract_rows_from_container(container: Tag) -> list[dict[str, str]]:
         if not isinstance(tr, Tag):
             continue
 
+        metadata = parse_metadata(get_text_from_cell(tr, "field-metadata", "td"))
+        org_assessment_id = get_text_from_cell(tr, "field-org_assessment_id", "th")
+        if not org_assessment_id:
+            org_assessment_id = get_text_from_cell(tr, "field-org_assessment_id", "td")
+
         row = {
+            "Org assessment id": org_assessment_id,
+            "Org assessment title": metadata["org_assessment_title"],
             "User id": get_text_from_cell(tr, "field-user_id", "td"),
             "Category": get_text_from_cell(tr, "field-category", "td"),
             "Sub category": get_text_from_cell(tr, "field-sub_category", "td"),
@@ -235,9 +268,7 @@ def extract_rows_from_container(container: Tag) -> list[dict[str, str]]:
             "Creation datetime": get_text_from_cell(
                 tr, "field-creation_datetime", "td"
             ),
-            "Question id": extract_question_id(
-                get_text_from_cell(tr, "field-metadata", "td")
-            ),
+            "Question id": metadata["question_id"],
         }
         if any(row.values()):
             rows.append(row)
@@ -375,10 +406,13 @@ def save_rows_to_csv(rows: list[dict[str, str]], target_date: date) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_rows = [
         {
+            "Org assessment id": row.get("Org assessment id", ""),
+            "Org assessment title": row.get("Org assessment title", ""),
             "User id": row.get("User id", ""),
             "Category": row.get("Category", ""),
             "Sub category": row.get("Sub category", ""),
             "Description": row.get("Description", ""),
+            "Creation datetime": row.get("Creation datetime", ""),
             "Question id": row.get("Question id", ""),
             "Question type": row.get("Question type", ""),
             "Question text": row.get("Question text", ""),
@@ -398,6 +432,15 @@ def save_rows_to_csv(rows: list[dict[str, str]], target_date: date) -> Path:
 
 
 def scrape_reports_for_date(target_date: date) -> list[dict[str, str]]:
+    return scrape_reports_for_date_range(target_date, target_date)
+
+
+def scrape_reports_for_date_range(
+    start_date: date, end_date: date
+) -> list[dict[str, str]]:
+    if end_date < start_date:
+        raise ValueError("end_date must be >= start_date")
+
     session = create_session()
     login_with_django_admin(session)
 
@@ -405,10 +448,20 @@ def scrape_reports_for_date(target_date: date) -> list[dict[str, str]]:
     first_container = get_container(BeautifulSoup(first_html, "html.parser"))
     total_pages = get_total_pages(first_container)
     print(f"Detected total pages: {total_pages}")
+    print(f"Collecting reports from {start_date.isoformat()} to {end_date.isoformat()}")
 
-    all_matches = filter_rows_by_date(
-        extract_rows_from_container(first_container), target_date
-    )
+    all_matches: list[dict[str, str]] = []
+
+    def collect(rows: list[dict[str, str]]) -> date | None:
+        for row in rows:
+            parsed = parse_creation_datetime(row.get("Creation datetime", ""))
+            if parsed and start_date <= parsed.date() <= end_date:
+                all_matches.append(row)
+        _, max_date = get_page_date_range(rows)
+        return max_date
+
+    max_date = collect(extract_rows_from_container(first_container))
+    print(f"Page 1: matched so far {len(all_matches)}")
 
     for page_number in range(2, total_pages + 1):
         html = fetch_page_html(session, page_number)
@@ -417,9 +470,9 @@ def scrape_reports_for_date(target_date: date) -> list[dict[str, str]]:
         if not rows:
             break
 
-        all_matches.extend(filter_rows_by_date(rows, target_date))
-        _, max_date = get_page_date_range(rows)
-        if max_date is not None and max_date < target_date:
+        max_date = collect(rows)
+        print(f"Page {page_number}: matched so far {len(all_matches)}")
+        if max_date is not None and max_date < start_date:
             break
 
     return all_matches

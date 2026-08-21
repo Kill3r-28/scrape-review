@@ -1,111 +1,99 @@
-# Scrape Review
+# Scrape Review + SME Tickets
 
-This project scrapes Topin/Django admin report data for a date, reviews MCQ content issues with an LLM, and provides a local Reflex dashboard for SME follow-up.
+Scrapes Topin/Django admin student reports, stores each report as a **ticket**, routes GRIT programme assessments to SMEs, and serves a hosted resolution board.
 
-## What it does
+## Ticket system (new)
 
-1. `main.py` asks for a date in `dd-mm-yyyy`
-2. `scrape.py` logs into the admin site using `.env` credentials
-3. It scrapes report rows matching the input date
-4. It saves them to `output/<date>/all_reports.csv`
-5. `review.py` reads that CSV and filters MCQ questions
-6. It fetches MCQ options, marked correct option, and question tags from Django admin
-7. DeepSeek via OpenRouter reviews each MCQ complaint
-8. It writes `output/<date>/to_review_mcq.csv`
-9. The Reflex dashboard reads local output files for SME follow-up
+Each student report becomes an open ticket with:
 
-## Project structure
+- **Student description**
+- **Ticket status** (`open` / `in_progress` / `resolved`)
+- **SME name** (auto-routed for GRIT titles; editable)
 
-```text
-scrape-review/
-  main.py
-  scrape.py
-  review.py
-  prompts.md
-  rxconfig.py
-  dashboard/
-  evals/
-  output/
+### GRIT routing
+
+If `org_assessment_title` contains any of these (case-insensitive), programme = **GRIT** and subject is matched:
+
+- Quantitative Reasoning
+- CS Fundamentals
+- UI Engineering
+- Computational Thinking
+- GenAI
+- Critical Thinking & Communication
+- Server Side Engineering
+- SQL
+
+SME names are configured in `tickets/config.py` (`SME_BY_SUBJECT`). Default is `Unassigned` until you fill real names.
+
+### Run the UI locally
+
+```bash
+uv sync
+uv run uvicorn tickets.app:app --reload --port 8000
 ```
 
-## Required environment variables
+Open http://127.0.0.1:8000
 
-Create a `.env` file in the project root.
+### Ingest yesterday's reports (9 AM job)
+
+```bash
+uv run python -m tickets.jobs.ingest_cli --previous-day
+```
+
+Optional: enrich with question text/tags (slower):
+
+```bash
+uv run python -m tickets.jobs.ingest_cli --previous-day --enrich
+```
+
+Specific date:
+
+```bash
+uv run python -m tickets.jobs.ingest_cli --date 2026-08-20
+```
+
+### Environment
 
 ```env
-SCRAPER_USERNAME=your_admin_username
-SCRAPER_PASSWORD=your_admin_password
-OPENROUTER_API_KEY=your_openrouter_key
-OPENROUTER_MODEL=deepseek/deepseek-chat-v3.1
-OPENROUTER_REFERER=http://localhost
-OPENROUTER_TITLE=scrape-review
+SCRAPER_USERNAME=...
+SCRAPER_PASSWORD=...
+DATABASE_URL=postgresql://...   # optional; defaults to local sqlite tickets.db
+INGEST_TOKEN=...                # required in production for /api/ingest/*
+OPENROUTER_API_KEY=...          # only for legacy LLM review flow
 ```
 
-## Run scrape + review
+## Daily scrape — is it automatic?
 
-```bash
-uv run python main.py
-```
+**Not yet.** The ingest command exists (`python -m tickets.jobs.ingest_cli --previous-day`), but nothing runs it on a schedule until you deploy a **Railway cron** (or similar) at 09:00 IST. Until then, run ingest manually or set up that cron.
 
-You will be prompted for a date like:
+### Deploy on Render (recommended free host)
 
-```text
-26-06-2026
-```
+See **[DEPLOY_RENDER.md](DEPLOY_RENDER.md)** for the full steps:
 
-## Reflex SME dashboard
+1. Free Postgres on [Neon](https://neon.tech)
+2. Render Blueprint from this repo (`render.yaml`)
+3. GitHub Action for 9 AM IST daily ingest
 
-Run the dashboard with:
+### Deploy on Railway
 
-```bash
-uv run reflex run
-```
+Railway is optional/paid for most plans. Prefer Render + Neon for free hosting.
 
-The dashboard is open without authentication for now. It reads local files from:
+### Login accounts (change passwords after first login)
 
-```text
-output/<date>/to_review_mcq.csv
-```
+| Username | Password | Role |
+|----------|----------|------|
+| admin | Admin@Grit2026! | Admin (you) |
+| poojitha | Poojitha@Grit2026! | SME — Quantitative Reasoning |
+| viharika | Viharika@Grit2026! | SME — UI Engineering |
+| varsha | Varsha@Grit2026! | SME — Computational Thinking, SQL |
+| saifullah | Saifullah@Grit2026! | SME — CS Fundamentals, Server Side Engineering |
+| namitha | Namitha@Grit2026! | SME — Critical Thinking & Communication |
 
-It shows a calendar view with resolved and not-resolved counts per date. Clicking a date opens the MCQ reports for that date, including user id, question id, and question tags from scraped data. SME, status, and notes are saved locally to:
+GenAI GRIT tickets stay **Unassigned** until you map an SME. Non-GRIT tickets are always Unassigned (admin can assign).
 
-```text
-output/<date>/sme_status.csv
-```
+## Legacy local LLM review flow
 
-## Output structure
+1. `uv run python main.py` — scrape + LLM MCQ review into `output/<date>/`
+2. `uv run reflex run` — older Reflex SME dashboard (CSV-based)
 
-Each run uses one folder per date.
-
-```text
-output/
-  26-06-2026/
-    all_reports.csv
-    to_review_mcq.csv
-    sme_status.csv
-    log.txt
-```
-
-## Resume behavior
-
-The workflow is resumable.
-
-- If `all_reports.csv` already exists, scraping is skipped
-- If `to_review_mcq.csv` already has rows, MCQ review continues from where it stopped
-- Human dashboard updates are stored separately in `sme_status.csv`
-
-## Prompt management
-
-All LLM prompts are stored in `prompts.md`.
-`review.py` loads prompt text from there instead of hardcoding large prompts.
-
-## Evals
-
-The `evals/` folder is for example-based checks. Add positives, negatives, and false positives there to improve prompt quality over time.
-
-## Notes
-
-- Scraping uses `requests` + `BeautifulSoup`, not browser automation
-- The current LLM backend is OpenRouter
-- The default review model is DeepSeek
-- The review flow currently handles MCQs only, with room to add coding/SQL review files later
+The ticket board above is the path forward for continuous resolution.

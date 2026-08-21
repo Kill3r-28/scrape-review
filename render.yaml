@@ -1,0 +1,35 @@
+# Render Blueprint — free web service for SME ticket board
+# https://render.com/docs/blueprint-spec
+#
+# Postgres: Render no longer offers a lasting free DB.
+# Create a free Neon DB (https://neon.tech) and set DATABASE_URL in the dashboard.
+#
+# Daily 9 AM IST ingest: use the included GitHub Action
+# (.github/workflows/daily-ingest.yml) — Render free cron is limited.
+
+services:
+  - type: web
+    name: sme-tickets
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHONPATH
+        value: /app
+      - key: SESSION_SECURE
+        value: "true"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: INGEST_TOKEN
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: SCRAPER_USERNAME
+        sync: false
+      - key: SCRAPER_PASSWORD
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

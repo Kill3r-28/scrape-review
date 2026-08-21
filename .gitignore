@@ -14,6 +14,7 @@ dist/
 wheels/
 *.egg-info/
 *.db
+tickets.db
 
 # Virtual environments
 .venv/

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Ticket #{{ ticket.id }}{% endblock %}
+{% block header_actions %}
+<a class="back" href="/">← All tickets</a>
+{% endblock %}
+{% block content %}
+<article class="detail">
+  <header class="detail-head">
+    <div>
+      <p class="muted mono">Ticket #{{ ticket.id }} · {{ ticket.report_date or "—" }}</p>
+      <h1>{{ ticket.org_assessment_title or "Untitled assessment" }}</h1>
+      <div class="chips">
+        <span class="badge status-{{ ticket.status }}">{{ ticket.status.replace('_', ' ') }}</span>
+        {% if ticket.programme == 'GRIT' %}<span class="badge grit">GRIT</span>{% endif %}
+        {% if ticket.subject %}<span class="badge">{{ ticket.subject }}</span>{% endif %}
+      </div>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>Student description</h2>
+    <p class="body-text">{{ ticket.student_description or "(empty)" }}</p>
+  </section>
+
+  <form class="card form-grid" method="post" action="/tickets/{{ ticket.id }}/update">
+    <h2>Resolution</h2>
+    <label>
+      Ticket status
+      <select name="status">
+        {% for s in statuses %}
+        <option value="{{ s }}" {% if ticket.status == s %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      SME name
+      {% if is_admin %}
+      <select name="sme_name">
+        {% for name in assignable_smes %}
+        <option value="{{ name }}" {% if ticket.sme_name == name %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <input name="sme_name" value="{{ ticket.sme_name }}" readonly />
+      {% endif %}
+    </label>
+    <label class="full">
+      Notes
+      <textarea name="notes" rows="4" placeholder="Follow-up notes">{{ ticket.notes }}</textarea>
+    </label>
+    <div class="full">
+      <button type="submit">Save</button>
+    </div>
+  </form>
+
+  <section class="card meta">
+    <h2>Report details</h2>
+    <dl>
+      <div><dt>User id</dt><dd class="mono">{{ ticket.user_id or "—" }}</dd></div>
+      <div><dt>Org assessment id</dt><dd class="mono">{{ ticket.org_assessment_id or "—" }}</dd></div>
+      <div><dt>Category</dt><dd>{{ ticket.category or "—" }} / {{ ticket.sub_category or "—" }}</dd></div>
+      <div><dt>Question id</dt><dd class="mono">{{ ticket.question_id or "—" }}</dd></div>
+      <div><dt>Question type</dt><dd>{{ ticket.question_type or "—" }}</dd></div>
+      <div><dt>Created</dt><dd>{{ ticket.creation_datetime or "—" }}</dd></div>
+      <div class="full"><dt>Question</dt><dd>{{ ticket.question_text or "—" }}</dd></div>
+      <div class="full"><dt>Tags</dt><dd>{{ ticket.question_tags or "—" }}</dd></div>
+    </dl>
+  </section>
+</article>
+{% endblock %}

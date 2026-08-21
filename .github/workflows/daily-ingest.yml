@@ -1,0 +1,23 @@
+name: daily-ticket-ingest
+
+# 09:00 Asia/Kolkata = 03:30 UTC
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ingest previous day's reports
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$INGEST_TOKEN" ]; then
+            echo "Set GitHub secrets APP_URL and INGEST_TOKEN (from Render)."
+            exit 1
+          fi
+          curl -fsS -X POST "${APP_URL%/}/api/ingest/previous-day" \
+            -H "X-Ingest-Token: ${INGEST_TOKEN}"

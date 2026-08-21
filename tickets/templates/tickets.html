@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Open tickets · SME{% endblock %}
+{% block content %}
+<section class="calendar-panel">
+  <div class="calendar-nav">
+    <a class="btn-ghost" href="{{ calendar.prev_href }}">← Previous</a>
+    <h2>{{ calendar.title }}</h2>
+    <a class="btn-ghost" href="{{ calendar.next_href }}">Next →</a>
+  </div>
+  <div class="calendar-grid weekdays">
+    {% for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] %}
+    <div class="weekday">{{ day }}</div>
+    {% endfor %}
+  </div>
+  <div class="calendar-grid">
+    {% for day in calendar.days %}
+    <a
+      class="day-cell {% if not day.in_month %}out{% endif %} {% if day.has_tickets %}has{% endif %} {% if filters.start_date == day.date and filters.end_date == day.date %}selected{% endif %}"
+      href="/?status={{ filters.status }}&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ day.date }}&end_date={{ day.date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}"
+    >
+      <div class="day-top">
+        <strong>{{ day.day }}</strong>
+        {% if day.has_tickets %}<span class="pill">{{ day.total }}</span>{% endif %}
+      </div>
+      {% if day.has_tickets %}
+      <div class="day-stats">
+        <span class="open-count">Open {{ day.open }}</span>
+        <span class="done-count">Done {{ day.resolved }}</span>
+      </div>
+      {% else %}
+      <div class="muted small">No tickets</div>
+      {% endif %}
+    </a>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="stats">
+  <a class="stat {% if filters.status == 'all' %}active{% endif %}" href="/?status=all&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}">
+    <span class="label">All</span>
+    <strong>{{ counts.all }}</strong>
+  </a>
+  <a class="stat {% if filters.status == 'open' %}active{% endif %}" href="/?status=open&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}">
+    <span class="label">Open</span>
+    <strong>{{ counts.open }}</strong>
+  </a>
+  <a class="stat {% if filters.status == 'in_progress' %}active{% endif %}" href="/?status=in_progress&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}">
+    <span class="label">In progress</span>
+    <strong>{{ counts.in_progress }}</strong>
+  </a>
+  <a class="stat {% if filters.status == 'resolved' %}active{% endif %}" href="/?status=resolved&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}">
+    <span class="label">Resolved</span>
+    <strong>{{ counts.resolved }}</strong>
+  </a>
+</section>
+
+<form class="filters" method="get" action="/">
+  <input type="hidden" name="status" value="{{ filters.status }}" />
+  <input type="hidden" name="cal_year" value="{{ calendar.year }}" />
+  <input type="hidden" name="cal_month" value="{{ calendar.month }}" />
+  <label>
+    Start date
+    <input type="date" name="start_date" value="{{ filters.start_date }}" />
+  </label>
+  <label>
+    End date
+    <input type="date" name="end_date" value="{{ filters.end_date }}" />
+  </label>
+  <label>
+    Programme
+    <select name="programme">
+      <option value="">All</option>
+      <option value="GRIT" {% if filters.programme == 'GRIT' %}selected{% endif %}>GRIT</option>
+      <option value="NIAT Skill Exams" {% if filters.programme == 'NIAT Skill Exams' %}selected{% endif %}>NIAT Skill Exams</option>
+      <option value="Other" {% if filters.programme == 'Other' %}selected{% endif %}>Other</option>
+    </select>
+  </label>
+  {% if is_admin %}
+  <label>
+    SME
+    <select name="sme">
+      <option value="">All</option>
+      {% for name in sme_names %}
+      <option value="{{ name }}" {% if filters.sme == name %}selected{% endif %}>{{ name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  <label class="grow">
+    Search
+    <input type="search" name="q" value="{{ filters.q }}" placeholder="Description, assessment, SME…" />
+  </label>
+  <button type="submit">Filter</button>
+  <a class="btn-ghost" href="/?status={{ filters.status }}">Clear dates</a>
+</form>
+
+<section class="panel">
+  <div class="panel-head">
+    <h1>{% if is_admin %}All tickets{% else %}My tickets{% endif %}</h1>
+    <p class="muted">
+      {% if filters.start_date or filters.end_date %}
+      Showing {{ filters.start_date or "…" }} → {{ filters.end_date or "…" }}.
+      {% endif %}
+      {% if is_admin %}
+      Assign Unassigned tickets and resolve any ticket.
+      {% else %}
+      Tickets assigned to you. Update status or mark resolved when done.
+      {% endif %}
+    </p>
+  </div>
+
+  {% if tickets %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Date</th>
+          <th>Student description</th>
+          <th>Status</th>
+          <th>SME</th>
+          <th>Assessment</th>
+          <th>Programme</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tickets %}
+        <tr>
+          <td class="mono"><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
+          <td class="mono">{{ t.report_date or "—" }}</td>
+          <td class="desc">
+            <a href="/tickets/{{ t.id }}">{{ t.student_description or "(no description)" }}</a>
+          </td>
+          <td><span class="badge status-{{ t.status }}">{{ t.status.replace('_', ' ') }}</span></td>
+          <td>
+            {% if is_admin %}
+            <form method="post" action="/tickets/{{ t.id }}/assign" class="inline-assign">
+              <select name="sme_name" onchange="this.form.submit()">
+                {% for name in assignable_smes %}
+                <option value="{{ name }}" {% if t.sme_name == name %}selected{% endif %}>{{ name }}</option>
+                {% endfor %}
+              </select>
+            </form>
+            {% else %}
+            {{ t.sme_name }}
+            {% endif %}
+          </td>
+          <td>
+            <div>{{ t.org_assessment_title or "—" }}</div>
+            {% if t.subject %}<div class="muted small">{{ t.subject }}</div>{% endif %}
+          </td>
+          <td>
+            {% if t.programme == programme_grit %}
+            <span class="badge grit">GRIT</span>
+            {% elif t.programme == programme_niat %}
+            <span class="badge niat">NIAT Skill Exams</span>
+            {% else %}
+            <span class="badge">Other</span>
+            {% endif %}
+          </td>
+          <td class="actions">
+            {% if t.status != 'resolved' %}
+            <form method="post" action="/tickets/{{ t.id }}/quick-resolve">
+              <button type="submit" class="btn-resolve">Resolve</button>
+            </form>
+            {% elif is_admin %}
+            <form method="post" action="/tickets/{{ t.id }}/quick-open">
+              <button type="submit" class="btn-ghost">Reopen</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    <h2>No tickets match</h2>
+    <p class="muted">Try clearing the date range or other filters.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

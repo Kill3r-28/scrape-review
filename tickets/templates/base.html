@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}SME Tickets{% endblock %}</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <a href="/">SME Ticket Resolution</a>
+      <span class="muted">Student reports → open tickets</span>
+    </div>
+    <div class="topbar-right">
+      {% if user %}
+      <span class="muted">{{ user.display_name }} · {{ user.role }}</span>
+      <form method="post" action="/logout" class="inline">
+        <button type="submit" class="btn-ghost">Log out</button>
+      </form>
+      {% endif %}
+      {% block header_actions %}{% endblock %}
+    </div>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
