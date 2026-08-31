@@ -7,7 +7,14 @@ from datetime import date
 
 from scrape import ENV_PATH, load_dotenv
 from tickets.db import SessionLocal, init_db
-from tickets.ingest import apply_sme_routing, ingest_date, ingest_date_range, ingest_previous_day
+from tickets.ingest import (
+    apply_sme_routing,
+    enrich_existing_tickets,
+    ingest_date,
+    ingest_date_range,
+    ingest_previous_day,
+    repair_missing_question_data,
+)
 
 
 def main() -> int:
@@ -24,11 +31,30 @@ def main() -> int:
         action="store_true",
         help="Re-apply GRIT subject → SME mapping on existing tickets",
     )
+    parser.add_argument(
+        "--enrich-tickets",
+        action="store_true",
+        help="Backfill question type/text/tags for tickets with a question_id",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional limit for --enrich-tickets",
+    )
+    parser.add_argument(
+        "--repair-questions",
+        action="store_true",
+        help="Re-scrape and fill missing question_id/type/text/tags "
+        "(uses --from-date/--to-date)",
+    )
     args = parser.parse_args()
 
-    enrich = bool(args.enrich) and not args.no_enrich
-    if not args.enrich and not args.no_enrich:
+    enrich = True
+    if args.no_enrich:
         enrich = False
+    if args.enrich:
+        enrich = True
 
     init_db()
     db = SessionLocal()
@@ -36,6 +62,28 @@ def main() -> int:
         if args.reroute_smes:
             updated = apply_sme_routing(db)
             print(f"Re-routed SME assignment on {updated} tickets")
+            return 0
+
+        if args.repair_questions:
+            if not args.from_date or not args.to_date:
+                parser.error("--repair-questions requires --from-date and --to-date")
+                return 2
+            start = date.fromisoformat(args.from_date)
+            end = date.fromisoformat(args.to_date)
+            result = repair_missing_question_data(db, start, end, enrich=enrich)
+            print(
+                f"Repair complete: scraped={result['scraped_rows']} "
+                f"linked={result['question_ids_linked']} "
+                f"enriched={result['enriched']}"
+            )
+            return 0
+
+        if args.enrich_tickets:
+            result = enrich_existing_tickets(db, only_missing=True, limit=args.limit)
+            print(
+                f"Enrich complete: updated={result['updated']} "
+                f"skipped={result['skipped']} total={result['total']}"
+            )
             return 0
 
         if args.previous_day:

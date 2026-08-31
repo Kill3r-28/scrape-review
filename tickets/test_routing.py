@@ -1,34 +1,27 @@
-"""Quick checks for GRIT / NIAT title routing."""
+"""Quick checks for topic-tag SME assignment + programmes."""
 
-from tickets.routing import is_niat_skill_exam, match_grit_subject, route_ticket
-
-
-def test_grit_matches():
-    assert match_grit_subject("CS Fundamentals - L1") == "CS Fundamentals"
-    assert match_grit_subject("Quantitative Reasoning - L2") == "Quantitative Reasoning"
-    assert match_grit_subject("Critical Thinking & Communication - L1") == (
-        "Critical Thinking & Communication"
-    )
-    assert match_grit_subject("Weekly Skill Assessment-7") is None
+from tickets.routing import assign_sme, assign_sme_from_tags, route_ticket
 
 
-def test_niat_skill_exam():
-    assert is_niat_skill_exam("Weekly Assessment - 3")
-    assert is_niat_skill_exam("Weekly Skill Assessment-7")
-    assert is_niat_skill_exam("Java Weekly Skill Main Assessment 3")
-    assert not is_niat_skill_exam("Frontend Developer")
+def test_topic_assign():
+    assert assign_sme_from_tags("TOPIC_QUANTITATIVE_MCQ") == "Poojitha Pachava"
+    assert assign_sme_from_tags("TOPIC_LOGICAL_NIAT_ENTRANCE_MCQ") == "Poojitha Pachava"
+    assert assign_sme_from_tags("TOPIC_VERBAL_ABILITY_MCQ") == "Mariyam"
+    assert assign_sme_from_tags("TOPIC_HTML_CSS_MCQ") == "Viharika"
+    assert assign_sme_from_tags("TOPIC_JS_CODING") == "Varsha"
+    assert assign_sme_from_tags("TOPIC_SQL_CODING") == "Varsha"
+    assert assign_sme_from_tags("TOPIC_CS_FUNDAMENTALS_MCQ") == "Saifullah"
+    assert assign_sme_from_tags("TOPIC_GRIT_GENAI") == "Saifullah"
+    assert assign_sme_from_tags("") == "Unassigned"
 
 
-def test_route_sets_programme():
-    routed = route_ticket("SQL - L1")
-    assert routed["programme"] == "GRIT"
-    assert routed["subject"] == "SQL"
-    assert routed["sme_name"] == "Varsha"
+def test_title_helps_when_tags_weak():
+    # No tags → Unassigned without title; with title rule fallback via assign_sme defaults
+    assert assign_sme("UI Engineering - L1", "") == "Viharika"
+    assert assign_sme("Random Exam", "") == "Unassigned"
 
-    niat = route_ticket("Weekly Assessment - 3")
-    assert niat["programme"] == "NIAT Skill Exams"
-    assert niat["sme_name"] == "Unassigned"
 
-    other = route_ticket("Frontend Developer")
-    assert other["programme"] == "Other"
-    assert other["subject"] == ""
+def test_programme_still_from_title():
+    assert route_ticket("CS Fundamentals - L1", "TOPIC_CS_FUNDAMENTALS_MCQ")["programme"] == "GRIT"
+    assert route_ticket("Weekly Skill Assessment-7", "TOPIC_JS_CODING")["programme"] == "Intensive Offline"
+    assert route_ticket("Weekly Assessment - 3", "")["programme"] == "NIAT Skill Exams"

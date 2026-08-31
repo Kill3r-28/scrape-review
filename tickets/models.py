@@ -47,6 +47,8 @@ class Ticket(Base):
     report_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     creation_datetime: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    criticality: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    critical_remark: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -58,3 +60,60 @@ class Ticket(Base):
         nullable=False,
     )
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WhatsAppDraft(Base):
+    """One WhatsApp-ready message per student user_id (may cover many tickets)."""
+
+    __tablename__ = "whatsapp_drafts"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_whatsapp_drafts_user_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ticket_ids: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class NudgeLog(Base):
+    __tablename__ = "nudge_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    sme_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    open_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    month_key: Mapped[str] = mapped_column(String(7), nullable=False, default="")
+    sent: Mapped[str] = mapped_column(String(16), nullable=False, default="skipped")
+    detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class AssignmentRule(Base):
+    """Admin-editable topic / assessment-title → SME mapping."""
+
+    __tablename__ = "assignment_rules"
+    __table_args__ = (
+        Index("ix_assignment_rules_type_priority", "rule_type", "priority"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    rule_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    marker: Mapped[str] = mapped_column(String(128), nullable=False)
+    sme_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    priority: Mapped[int] = mapped_column(nullable=False, default=100)
+    active: Mapped[bool] = mapped_column(nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+

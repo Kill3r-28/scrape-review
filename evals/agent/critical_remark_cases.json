@@ -1,0 +1,110 @@
+[
+  {
+    "id": "trivial_internal_test_title",
+    "student_description": "My answer is correct but marked wrong.",
+    "question_text": "While loop practice",
+    "question_type": "IDE_CODING",
+    "question_tags": "TOPIC_PYTHON_CODING",
+    "org_assessment_title": "python_while_loop_day5",
+    "programme": "Other",
+    "category": "Content",
+    "sub_category": "INCORRECT_ANSWER",
+    "expected_criticality": "Trivial"
+  },
+  {
+    "id": "critical_answer_dispute",
+    "student_description": "Answer is 232 boys who did not played any of the three games.",
+    "question_text": "How many boys did not play any game?",
+    "question_type": "MCQ",
+    "question_tags": "TOPIC_QUANTITATIVE_MCQ",
+    "org_assessment_title": "Weekly Assessment - 2",
+    "programme": "NIAT Skill Exams",
+    "category": "Content",
+    "sub_category": "CONTENT_OTHER",
+    "expected_criticality": "Critical"
+  },
+  {
+    "id": "critical_test_case_wrong_input",
+    "student_description": "the test case has wrong input instead of 1 5 it has 15",
+    "question_text": "Read two integers and print their sum.",
+    "question_type": "IDE_CODING",
+    "question_tags": "TOPIC_PYTHON_CODING",
+    "org_assessment_title": "Coding Assessment - 1",
+    "programme": "Intensive Offline",
+    "category": "Content",
+    "sub_category": "INCORRECT_TEST_CASES",
+    "expected_criticality": "Critical"
+  },
+  {
+    "id": "critical_cannot_see_output",
+    "student_description": "Test case issues, though i have written the code i am unable to see my correct output",
+    "question_text": "Write a program to print hello world.",
+    "question_type": "IDE_CODING",
+    "question_tags": "TOPIC_PYTHON_CODING",
+    "org_assessment_title": "Python - L1",
+    "programme": "GRIT",
+    "category": "Content",
+    "sub_category": "CONTENT_OTHER",
+    "expected_criticality": "Critical"
+  },
+  {
+    "id": "critical_empty_wrong_answer_subcat",
+    "student_description": "-",
+    "question_text": "What is 2+2?",
+    "question_type": "MCQ",
+    "question_tags": "TOPIC_QUANTITATIVE_MCQ",
+    "org_assessment_title": "Weekly Assessment - 3",
+    "programme": "NIAT Skill Exams",
+    "category": "Content",
+    "sub_category": "INCORRECT_ANSWER",
+    "expected_criticality": "Critical"
+  },
+  {
+    "id": "trivial_empty_no_signal",
+    "student_description": "-",
+    "question_text": "Sample question",
+    "question_type": "MCQ",
+    "question_tags": "TOPIC_CS_FUNDAMENTALS_MCQ",
+    "org_assessment_title": "CS Fundamentals - L1",
+    "programme": "GRIT",
+    "category": "Platform",
+    "sub_category": "PLATFORM_OTHER",
+    "expected_criticality": "Trivial"
+  },
+  {
+    "id": "moderate_internet",
+    "student_description": "because of internet it automatically submit the assessment",
+    "question_text": "",
+    "question_type": "IDE_CODING",
+    "question_tags": "TOPIC_PYTHON_CODING",
+    "org_assessment_title": "Weekly Skill Assessment-4",
+    "programme": "Intensive Offline",
+    "category": "Platform",
+    "sub_category": "INTERNET_ISSUE",
+    "expected_criticality": "Moderate"
+  },
+  {
+    "id": "moderate_ide_timeout",
+    "student_description": "IDE is very slow and run button times out",
+    "question_text": "Write sum of two numbers.",
+    "question_type": "IDE_CODING",
+    "question_tags": "TOPIC_PYTHON_CODING",
+    "org_assessment_title": "Coding - L1",
+    "programme": "GRIT",
+    "category": "Platform",
+    "sub_category": "RUN_TIMEOUT",
+    "expected_criticality": "Moderate"
+  },
+  {
+    "id": "moderate_platform_crash",
+    "student_description": "entered into the web coding section it will terminate from the page",
+    "question_text": "",
+    "question_type": "IDE_CODING",
+    "question_tags": "TOPIC_JS_CODING",
+    "org_assessment_title": "Frontend Assessment",
+    "programme": "NIAT Skill Exams",
+    "category": "Platform",
+    "sub_category": "PLATFORM_OTHER",
+    "expected_criticality": "Moderate"
+  }
+]

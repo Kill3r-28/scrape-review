@@ -19,7 +19,12 @@ REPORT_URL = f"{BASE_URL}{REPORT_PATH}"
 LOGIN_URL = f"{BASE_URL}/admin/login/?next={quote(REPORT_PATH)}"
 QUESTION_SEARCH_URL = f"{BASE_URL}/admin/nkb_question/question/"
 QUESTION_TAG_URL = f"{BASE_URL}/admin/nkb_question/questiontag/"
+QUESTION_CHANGE_URL_TEMPLATE = f"{BASE_URL}/admin/nkb_question/question/{{question_id}}/change/"
 
+UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
 OUTPUT_DIR = BASE_DIR / "output"
@@ -216,6 +221,20 @@ def get_text_from_cell(row: Tag, class_name: str, tag_name: str) -> str:
     return cell.get_text(" ", strip=True) if isinstance(cell, Tag) else ""
 
 
+def extract_question_id_from_metadata(data: dict) -> str:
+    direct = str(data.get("question_id", "") or "").strip()
+    if direct:
+        return direct
+
+    exam_details = data.get("exam_details") or {}
+    if isinstance(exam_details, dict):
+        for key in ("questions_id", "question_id", "questionId"):
+            value = str(exam_details.get(key, "") or "").strip()
+            if value:
+                return value
+    return ""
+
+
 def parse_metadata(metadata_text: str) -> dict[str, str]:
     if not metadata_text.strip():
         return {"question_id": "", "org_assessment_title": ""}
@@ -223,18 +242,28 @@ def parse_metadata(metadata_text: str) -> dict[str, str]:
     try:
         data = json.loads(metadata_text)
         return {
-            "question_id": str(data.get("question_id", "") or "").strip(),
+            "question_id": extract_question_id_from_metadata(data),
             "org_assessment_title": str(
                 data.get("org_assessment_title", "") or ""
             ).strip(),
         }
     except json.JSONDecodeError:
-        question_match = re.search(r'"question_id"\s*:\s*"([^"]+)"', metadata_text)
         title_match = re.search(
             r'"org_assessment_title"\s*:\s*"([^"]+)"', metadata_text
         )
+        questions_id_match = re.search(
+            r'"questions_id"\s*:\s*"([^"]+)"', metadata_text
+        )
+        question_id_match = re.search(
+            r'"question_id"\s*:\s*"([^"]+)"', metadata_text
+        )
+        question_id = ""
+        if questions_id_match:
+            question_id = questions_id_match.group(1).strip()
+        elif question_id_match:
+            question_id = question_id_match.group(1).strip()
         return {
-            "question_id": question_match.group(1).strip() if question_match else "",
+            "question_id": question_id,
             "org_assessment_title": title_match.group(1).strip() if title_match else "",
         }
 
@@ -304,45 +333,58 @@ def get_all_reports_csv_path(target_date: date) -> Path:
     return get_output_dir_for_date(target_date) / "all_reports.csv"
 
 
+def _form_field_value(soup: BeautifulSoup, name: str) -> str:
+    el = soup.find(["input", "textarea", "select"], attrs={"name": name})
+    if not isinstance(el, Tag):
+        return ""
+    if el.name == "textarea":
+        return el.get_text() if el.get_text() is not None else ""
+    if el.name == "select":
+        selected = el.find("option", selected=True)
+        if isinstance(selected, Tag):
+            return selected.get_text(" ", strip=True)
+        return ""
+    value = el.get("value", "")
+    return value.strip() if isinstance(value, str) else ""
+
+
 def fetch_question_summary(
     session: requests.Session, question_id: str
 ) -> dict[str, str]:
+    """Pull question type + content from the Django admin change page."""
     if not question_id.strip():
         return {"Question type": "", "Question text": ""}
     try:
         response = session.get(
-            QUESTION_SEARCH_URL, params={"q": question_id}, timeout=TIMEOUT_SECONDS
+            QUESTION_CHANGE_URL_TEMPLATE.format(question_id=question_id.strip()),
+            timeout=TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         if is_login_page(response):
             return {"Question type": "", "Question text": ""}
+
         soup = BeautifulSoup(response.text, "html.parser")
-        container = soup.find("div", class_="changelist-form-container")
-        if not isinstance(container, Tag):
-            return {"Question type": "", "Question text": ""}
-        table = container.find("table", id="result_list")
-        if not isinstance(table, Tag):
-            return {"Question type": "", "Question text": ""}
-        tbody = table.find("tbody")
-        if not isinstance(tbody, Tag):
-            return {"Question type": "", "Question text": ""}
-        first_row = tbody.find("tr")
-        if not isinstance(first_row, Tag):
-            return {"Question type": "", "Question text": ""}
+        question_type = _form_field_value(soup, "question_type").strip()
+        question_text = _form_field_value(soup, "content").strip()
+        if not question_text:
+            question_text = _form_field_value(soup, "short_text").strip()
         return {
-            "Question type": get_text_from_cell(first_row, "field-question_type", "td"),
-            "Question text": get_text_from_cell(first_row, "field-content", "td"),
+            "Question type": question_type,
+            "Question text": question_text,
         }
     except requests.RequestException:
         return {"Question type": "", "Question text": ""}
 
 
 def fetch_question_tags(session: requests.Session, question_id: str) -> list[str]:
+    """Pull tag enums from /admin/nkb_question/questiontag/?q=<question_id>."""
     if not question_id.strip():
         return []
     try:
         response = session.get(
-            QUESTION_TAG_URL, params={"q": question_id}, timeout=TIMEOUT_SECONDS
+            QUESTION_TAG_URL,
+            params={"q": question_id.strip()},
+            timeout=TIMEOUT_SECONDS,
         )
         response.raise_for_status()
         if is_login_page(response):
@@ -359,12 +401,21 @@ def fetch_question_tags(session: requests.Session, question_id: str) -> list[str
             return []
 
         tags: list[str] = []
+        seen: set[str] = set()
+        qid = question_id.strip().lower()
         for tag_row in tbody.find_all("tr"):
             if not isinstance(tag_row, Tag):
                 continue
-            tag_value = get_text_from_cell(tag_row, "field-tag_name_enum", "td")
-            if tag_value:
-                tags.append(tag_value)
+            tag_value = get_text_from_cell(tag_row, "field-tag_name_enum", "td").strip()
+            if not tag_value:
+                continue
+            # Admin sometimes returns the question id itself as a fake tag row.
+            if tag_value.lower() == qid or UUID_RE.match(tag_value):
+                continue
+            if tag_value in seen:
+                continue
+            seen.add(tag_value)
+            tags.append(tag_value)
         return tags
     except requests.RequestException:
         return []

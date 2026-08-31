@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}WhatsApp drafts · SME{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <h1>WhatsApp messages (by student)</h1>
+    <p class="muted">
+      One message per student <span class="mono">user_id</span>, built from SME notes across their tickets.
+      {% if missing_draft_count %}{{ missing_draft_count }} student(s) have notes but no draft yet.{% endif %}
+    </p>
+  </div>
+
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <form class="filters" method="post" action="/whatsapp/generate">
+    <label class="grow">
+      Student user id (optional — leave blank to generate for all with notes)
+      <input name="user_id" placeholder="uuid…" />
+    </label>
+    <button type="submit">Generate / refresh drafts</button>
+  </form>
+
+  {% if drafts %}
+  <div class="draft-list">
+    {% for d in drafts %}
+    <article class="card draft-card">
+      <header class="draft-head">
+        <div>
+          <div class="mono">{{ d.user_id }}</div>
+          <div class="muted small">Tickets: {{ d.ticket_ids }}</div>
+        </div>
+      </header>
+      <form method="post" action="/whatsapp/{{ d.id }}/save">
+        <label class="full">
+          WhatsApp message
+          <textarea name="message_text" rows="10">{{ d.message_text }}</textarea>
+        </label>
+        <button type="submit">Save edits</button>
+      </form>
+      <details>
+        <summary class="muted">Source SME notes</summary>
+        <pre class="question-text">{{ d.source_notes }}</pre>
+      </details>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">
+    <h2>No drafts yet</h2>
+    <p class="muted">Add notes on tickets, then generate WhatsApp messages here.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

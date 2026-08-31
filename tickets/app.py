@@ -21,18 +21,27 @@ from tickets.calendar_view import (
     shift_month,
 )
 from tickets.config import (
+    ADMIN_SME_FILTERS,
     ASSIGNABLE_SMES,
     GRIT_SUBJECTS,
     PROGRAMME_GRIT,
+    PROGRAMME_INTENSIVE_OFFLINE,
     PROGRAMME_NIAT_SKILL,
+    RULE_TYPE_ASSESSMENT,
+    RULE_TYPE_TOPIC,
+    SME_NOT_MINE,
     STATUS_OPEN,
     STATUS_RESOLVED,
     TICKET_STATUSES,
 )
 from tickets.db import get_db, init_db
 from tickets.ingest import ingest_date, ingest_previous_day, set_ticket_status
-from tickets.models import Ticket
+from tickets.models import AssignmentRule, Ticket, WhatsAppDraft
+from tickets.routing import reassign_open_tickets
 from tickets.session import clear_session, get_current_user, set_session
+from tickets.agent.draft import draft_whatsapp_for_user, draft_whatsapp_for_users_with_notes
+from tickets.agent.nudge import run_daily_sme_nudges
+from tickets.agent.draft import tickets_with_notes_by_user
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -279,12 +288,15 @@ def ticket_board(
                 "end_date": end_date,
                 "q": q,
             },
-            "sme_names": list(ASSIGNABLE_SMES),
+            "sme_names": list(ADMIN_SME_FILTERS) if is_admin(user) else list(ASSIGNABLE_SMES),
+            "assignable_smes": ASSIGNABLE_SMES,
+            "not_mine_label": SME_NOT_MINE,
+            "auto_refresh_seconds": 30 if is_admin(user) else 0,
             "statuses": TICKET_STATUSES,
             "grit_subjects": GRIT_SUBJECTS,
             "programme_grit": PROGRAMME_GRIT,
             "programme_niat": PROGRAMME_NIAT_SKILL,
-            "assignable_smes": ASSIGNABLE_SMES,
+            "programme_intensive": PROGRAMME_INTENSIVE_OFFLINE,
             "calendar": {
                 "title": month_title(year, month),
                 "days": build_calendar_days(year, month, calendar_counts_by_date(db, user)),
@@ -314,8 +326,10 @@ def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db
             "user": user,
             "is_admin": is_admin(user),
             "ticket": ticket,
+            "tag_list": [t.strip() for t in (ticket.question_tags or "").split(",") if t.strip()],
             "statuses": TICKET_STATUSES,
-            "assignable_smes": ASSIGNABLE_SMES,
+            "assignable_smes": list(ASSIGNABLE_SMES) + ([SME_NOT_MINE] if is_admin(user) else []),
+            "auto_refresh_seconds": 0,
         },
     )
 
@@ -395,15 +409,229 @@ def assign_ticket(
     return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
 
 
+@app.get("/whatsapp", response_class=HTMLResponse)
+def whatsapp_board(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return _login_redirect()
+
+    drafts = db.query(WhatsAppDraft).order_by(WhatsAppDraft.updated_at.desc()).all()
+    pending_users = sorted(tickets_with_notes_by_user(db).keys())
+    drafted_ids = {d.user_id for d in drafts}
+    return templates.TemplateResponse(
+        request,
+        "whatsapp.html",
+        {
+            "user": user,
+            "is_admin": is_admin(user),
+            "drafts": drafts,
+            "pending_count": len(pending_users),
+            "missing_draft_count": len([u for u in pending_users if u not in drafted_ids]),
+            "auto_refresh_seconds": 0,
+        },
+    )
+
+
+@app.post("/whatsapp/generate")
+def whatsapp_generate(
+    request: Request,
+    user_id: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user:
+        return _login_redirect()
+    try:
+        if user_id.strip():
+            draft_whatsapp_for_user(db, user_id.strip(), use_llm=True)
+        else:
+            draft_whatsapp_for_users_with_notes(db, use_llm=True, limit=50)
+    except Exception as exc:  # noqa: BLE001
+        return templates.TemplateResponse(
+            request,
+            "whatsapp.html",
+            {
+                "user": user,
+                "is_admin": is_admin(user),
+                "drafts": db.query(WhatsAppDraft).order_by(WhatsAppDraft.updated_at.desc()).all(),
+                "pending_count": 0,
+                "missing_draft_count": 0,
+                "error": str(exc),
+            },
+            status_code=400,
+        )
+    return RedirectResponse("/whatsapp", status_code=303)
+
+
+@app.post("/whatsapp/{draft_id}/save")
+def whatsapp_save(
+    draft_id: int,
+    request: Request,
+    message_text: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user:
+        return _login_redirect()
+    draft = db.get(WhatsAppDraft, draft_id)
+    if draft:
+        draft.message_text = message_text.strip()
+        db.commit()
+    return RedirectResponse("/whatsapp", status_code=303)
+
+
+@app.post("/tickets/{ticket_id}/not-mine")
+def mark_not_mine(ticket_id: int, request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return _login_redirect()
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket or not can_edit_ticket(user, ticket):
+        return RedirectResponse("/", status_code=303)
+    ticket.sme_name = SME_NOT_MINE
+    if ticket.status == STATUS_RESOLVED:
+        ticket.status = STATUS_OPEN
+        ticket.resolved_at = None
+    db.commit()
+    return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+
+
+@app.get("/assignments", response_class=HTMLResponse)
+def assignments_page(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return _login_redirect()
+    if not is_admin(user):
+        return RedirectResponse("/", status_code=303)
+
+    not_mine = (
+        db.query(Ticket)
+        .filter(Ticket.sme_name == SME_NOT_MINE)
+        .order_by(Ticket.id.desc())
+        .limit(200)
+        .all()
+    )
+    topic_rules = (
+        db.query(AssignmentRule)
+        .filter(AssignmentRule.rule_type == RULE_TYPE_TOPIC)
+        .order_by(AssignmentRule.priority.asc(), AssignmentRule.id.asc())
+        .all()
+    )
+    title_rules = (
+        db.query(AssignmentRule)
+        .filter(AssignmentRule.rule_type == RULE_TYPE_ASSESSMENT)
+        .order_by(AssignmentRule.priority.asc(), AssignmentRule.id.asc())
+        .all()
+    )
+    return templates.TemplateResponse(
+        request,
+        "assignments.html",
+        {
+            "user": user,
+            "is_admin": True,
+            "not_mine": not_mine,
+            "topic_rules": topic_rules,
+            "title_rules": title_rules,
+            "assignable_smes": ASSIGNABLE_SMES,
+            "rule_type_topic": RULE_TYPE_TOPIC,
+            "rule_type_assessment": RULE_TYPE_ASSESSMENT,
+            "message": request.query_params.get("msg", ""),
+            "auto_refresh_seconds": 0,
+        },
+    )
+
+
+@app.post("/assignments/rules/add")
+def add_assignment_rule(
+    request: Request,
+    rule_type: str = Form(...),
+    marker: str = Form(...),
+    sme_name: str = Form(...),
+    priority: int = Form(100),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return RedirectResponse("/", status_code=303)
+    if rule_type not in (RULE_TYPE_TOPIC, RULE_TYPE_ASSESSMENT):
+        return RedirectResponse("/assignments", status_code=303)
+    if sme_name not in ASSIGNABLE_SMES:
+        return RedirectResponse("/assignments", status_code=303)
+    marker = marker.strip()
+    if not marker:
+        return RedirectResponse("/assignments", status_code=303)
+    db.add(
+        AssignmentRule(
+            rule_type=rule_type,
+            marker=marker,
+            sme_name=sme_name,
+            priority=priority,
+            active=True,
+        )
+    )
+    db.commit()
+    return RedirectResponse("/assignments?msg=Rule+added", status_code=303)
+
+
+@app.post("/assignments/rules/{rule_id}/delete")
+def delete_assignment_rule(
+    rule_id: int, request: Request, db: Session = Depends(get_db)
+):
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return RedirectResponse("/", status_code=303)
+    rule = db.get(AssignmentRule, rule_id)
+    if rule:
+        db.delete(rule)
+        db.commit()
+    return RedirectResponse("/assignments?msg=Rule+deleted", status_code=303)
+
+
+@app.post("/assignments/rules/{rule_id}/toggle")
+def toggle_assignment_rule(
+    rule_id: int, request: Request, db: Session = Depends(get_db)
+):
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return RedirectResponse("/", status_code=303)
+    rule = db.get(AssignmentRule, rule_id)
+    if rule:
+        rule.active = not rule.active
+        db.commit()
+    return RedirectResponse("/assignments", status_code=303)
+
+
+@app.post("/assignments/reapply")
+def reapply_assignments(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return RedirectResponse("/", status_code=303)
+    updated = reassign_open_tickets(db, skip_not_mine=True)
+    return RedirectResponse(
+        f"/assignments?msg=Reassigned+{updated}+tickets+(Not+mine+left+unchanged)",
+        status_code=303,
+    )
+
+
 @app.get("/health")
 def health():
     return {"ok": True}
 
 
+@app.post("/api/agent/nudge")
+def api_agent_nudge(
+    request: Request,
+    dry_run: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    _require_ingest_token(request)
+    return {"results": run_daily_sme_nudges(db, dry_run=dry_run)}
+
+
 @app.post("/api/ingest/previous-day")
 def api_ingest_previous_day(
     request: Request,
-    enrich: bool = Query(False),
+    enrich: bool = Query(True),
     db: Session = Depends(get_db),
 ):
     _require_ingest_token(request)
@@ -414,7 +642,7 @@ def api_ingest_previous_day(
 def api_ingest_date(
     report_date: str,
     request: Request,
-    enrich: bool = Query(False),
+    enrich: bool = Query(True),
     db: Session = Depends(get_db),
 ):
     _require_ingest_token(request)

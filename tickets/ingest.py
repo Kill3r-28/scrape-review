@@ -10,6 +10,8 @@ from scrape import (
     ENV_PATH,
     create_session,
     enrich_rows,
+    fetch_question_summary,
+    fetch_question_tags,
     load_dotenv,
     login_with_django_admin,
     parse_creation_datetime,
@@ -52,9 +54,12 @@ def report_date_for_row(row: dict[str, str], fallback: date | None = None) -> da
     return datetime.now(IST).date()
 
 
-def row_to_ticket_fields(row: dict[str, str], report_date: date) -> dict:
+def row_to_ticket_fields(
+    row: dict[str, str], report_date: date, db: Session | None = None
+) -> dict:
     title = row.get("Org assessment title", "").strip()
-    routed = route_ticket(title)
+    tags = row.get("Question tags", "").strip()
+    routed = route_ticket(title, tags, db)
     return {
         "external_report_id": build_external_report_id(row),
         "student_description": row.get("Description", "").strip(),
@@ -70,7 +75,7 @@ def row_to_ticket_fields(row: dict[str, str], report_date: date) -> dict:
         "question_id": row.get("Question id", "").strip(),
         "question_type": row.get("Question type", "").strip(),
         "question_text": row.get("Question text", "").strip(),
-        "question_tags": row.get("Question tags", "").strip(),
+        "question_tags": tags,
         "report_date": report_date.isoformat(),
         "creation_datetime": row.get("Creation datetime", "").strip(),
     }
@@ -86,7 +91,7 @@ def upsert_tickets(
     seen: set[str] = set()
     for row in rows:
         day = report_date_for_row(row, report_date)
-        fields = row_to_ticket_fields(row, day)
+        fields = row_to_ticket_fields(row, day, db)
         external_id = fields["external_report_id"]
         if external_id in seen:
             skipped += 1
@@ -109,23 +114,10 @@ def upsert_tickets(
 
 
 def apply_sme_routing(db: Session) -> int:
-    """Re-apply GRIT subject → SME mapping on all tickets."""
-    updated = 0
-    for ticket in db.query(Ticket).all():
-        routed = route_ticket(ticket.org_assessment_title)
-        changed = (
-            ticket.programme != routed["programme"]
-            or ticket.subject != routed["subject"]
-            or ticket.sme_name != routed["sme_name"]
-        )
-        if not changed:
-            continue
-        ticket.programme = routed["programme"]
-        ticket.subject = routed["subject"]
-        ticket.sme_name = routed["sme_name"]
-        updated += 1
-    db.commit()
-    return updated
+    """Re-apply programme + topic/title SME mapping (skips Not mine)."""
+    from tickets.routing import reassign_open_tickets
+
+    return reassign_open_tickets(db, skip_not_mine=True)
 
 
 def ingest_date(db: Session, target_date: date, *, enrich: bool = True) -> dict[str, int]:
@@ -173,3 +165,143 @@ def set_ticket_status(db: Session, ticket: Ticket, status: str) -> Ticket:
     db.commit()
     db.refresh(ticket)
     return ticket
+
+
+def enrich_existing_tickets(
+    db: Session,
+    *,
+    only_missing: bool = True,
+    limit: int | None = None,
+) -> dict[str, int]:
+    """Backfill question type/text/tags for tickets that already have a question_id."""
+    load_dotenv(ENV_PATH)
+    query = db.query(Ticket).filter(Ticket.question_id != "")
+    if only_missing:
+        query = query.filter(
+            (Ticket.question_type == "")
+            | (Ticket.question_text == "")
+            | (Ticket.question_tags == "")
+        )
+    tickets = query.order_by(Ticket.id.asc()).all()
+    if limit is not None:
+        tickets = tickets[:limit]
+
+    if not tickets:
+        return {"updated": 0, "skipped": 0, "total": 0}
+
+    session = create_session()
+    login_with_django_admin(session)
+
+    question_cache: dict[str, dict[str, str]] = {}
+    tag_cache: dict[str, list[str]] = {}
+    updated = 0
+    skipped = 0
+    total = len(tickets)
+
+    for index, ticket in enumerate(tickets, start=1):
+        qid = ticket.question_id.strip()
+        print(f"\rEnriching ticket {index}/{total} ({qid})", end="", flush=True)
+
+        if qid not in question_cache:
+            question_cache[qid] = fetch_question_summary(session, qid)
+        if qid not in tag_cache:
+            tag_cache[qid] = fetch_question_tags(session, qid)
+
+        summary = question_cache[qid]
+        tags = tag_cache[qid]
+        new_type = summary.get("Question type", "").strip()
+        new_text = summary.get("Question text", "").strip()
+        new_tags = ", ".join(tags)
+
+        changed = False
+        if new_type and ticket.question_type != new_type:
+            ticket.question_type = new_type
+            changed = True
+        if new_text and ticket.question_text != new_text:
+            ticket.question_text = new_text
+            changed = True
+        if new_tags and ticket.question_tags != new_tags:
+            ticket.question_tags = new_tags
+            changed = True
+
+        # Re-assign SME when tags land/change.
+        routed = route_ticket(
+            ticket.org_assessment_title, ticket.question_tags or new_tags, db
+        )
+        if ticket.sme_name != routed["sme_name"]:
+            ticket.sme_name = routed["sme_name"]
+            changed = True
+        if ticket.programme != routed["programme"]:
+            ticket.programme = routed["programme"]
+            changed = True
+        if ticket.subject != routed["subject"]:
+            ticket.subject = routed["subject"]
+            changed = True
+
+        if changed:
+            updated += 1
+        else:
+            skipped += 1
+
+        if index % 25 == 0:
+            db.commit()
+
+    db.commit()
+    print()
+    return {"updated": updated, "skipped": skipped, "total": total}
+
+
+def repair_missing_question_data(
+    db: Session,
+    start_date: date,
+    end_date: date,
+    *,
+    enrich: bool = True,
+) -> dict[str, int]:
+    """
+    Re-scrape reports and fill question_id / type / text / tags on tickets that
+    were ingested before exam_details.questions_id was parsed.
+    """
+    load_dotenv(ENV_PATH)
+    rows = scrape_reports_for_date_range(start_date, end_date)
+    by_external = {build_external_report_id(row): row for row in rows}
+
+    missing = db.query(Ticket).filter(Ticket.question_id == "").all()
+    linked = 0
+    for ticket in missing:
+        row = by_external.get(ticket.external_report_id)
+        if not row:
+            # Fallback match on user + creation + description.
+            for candidate in rows:
+                if (
+                    candidate.get("User id", "").strip() == ticket.user_id
+                    and candidate.get("Creation datetime", "").strip()
+                    == ticket.creation_datetime
+                    and candidate.get("Description", "").strip()
+                    == ticket.student_description
+                ):
+                    row = candidate
+                    break
+        if not row:
+            continue
+        qid = row.get("Question id", "").strip()
+        if not qid:
+            continue
+        ticket.question_id = qid
+        if not ticket.org_assessment_title:
+            ticket.org_assessment_title = row.get("Org assessment title", "").strip()
+        if not ticket.org_assessment_id:
+            ticket.org_assessment_id = row.get("Org assessment id", "").strip()
+        linked += 1
+    db.commit()
+
+    enrich_result = {"updated": 0, "skipped": 0, "total": 0}
+    if enrich and linked:
+        enrich_result = enrich_existing_tickets(db, only_missing=True)
+
+    return {
+        "scraped_rows": len(rows),
+        "question_ids_linked": linked,
+        "enriched": enrich_result["updated"],
+        "enrich_skipped": enrich_result["skipped"],
+    }

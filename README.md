@@ -1,99 +1,91 @@
-# Scrape Review + SME Tickets
+# SME Ticket Agent
 
-Scrapes Topin/Django admin student reports, stores each report as a **ticket**, routes GRIT programme assessments to SMEs, and serves a hosted resolution board.
+Scrape student assessment reports into tickets, **assign SMEs from question topic tags**, **nudge SMEs by email**, and **draft WhatsApp replies per student** from SME notes.
 
-## Ticket system (new)
+## Agent loop
 
-Each student report becomes an open ticket with:
+1. **Assign** — `TOPIC_*` tags → SME (rules, no LLM)
+2. **Nudge** — daily 10:00 IST email: open ticket count this month per SME
+3. **Draft** — LLM WhatsApp message per `user_id` from ticket notes (UI: `/whatsapp`)
 
-- **Student description**
-- **Ticket status** (`open` / `in_progress` / `resolved`)
-- **SME name** (auto-routed for GRIT titles; editable)
+## Topic → SME
 
-### GRIT routing
+| Topic signals | SME |
+|---------------|-----|
+| Quantitative, Logical | Poojitha Pachava |
+| Verbal | Mariyam |
+| HTML/CSS, React, Web, Node | Viharika |
+| DSA, Coding, SQL, Python, CPP | Varsha |
+| CS Fundamentals + other topics | Saifullah |
+| No topic tags | Unassigned |
 
-If `org_assessment_title` contains any of these (case-insensitive), programme = **GRIT** and subject is matched:
+Edit emails in `tickets/config.py` → `SME_EMAILS` (required for real nudges).
 
-- Quantitative Reasoning
-- CS Fundamentals
-- UI Engineering
-- Computational Thinking
-- GenAI
-- Critical Thinking & Communication
-- Server Side Engineering
-- SQL
-
-SME names are configured in `tickets/config.py` (`SME_BY_SUBJECT`). Default is `Unassigned` until you fill real names.
-
-### Run the UI locally
+## Run locally
 
 ```bash
 uv sync
 uv run uvicorn tickets.app:app --reload --port 8000
 ```
 
-Open http://127.0.0.1:8000
+Open http://127.0.0.1:8000 — login `admin` / `Admin@Grit2026!`
 
-### Ingest yesterday's reports (9 AM job)
+### Ingest / enrich
 
 ```bash
 uv run python -m tickets.jobs.ingest_cli --previous-day
+uv run python -m tickets.jobs.ingest_cli --enrich-tickets
+uv run python -m tickets.jobs.agent_cli --reassign
 ```
 
-Optional: enrich with question text/tags (slower):
+### Nudge (dry run)
 
 ```bash
-uv run python -m tickets.jobs.ingest_cli --previous-day --enrich
+uv run python -m tickets.jobs.agent_cli --nudge --dry-run
 ```
 
-Specific date:
+SMTP (when ready): `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`
+
+### WhatsApp drafts
 
 ```bash
-uv run python -m tickets.jobs.ingest_cli --date 2026-08-20
+uv run python -m tickets.jobs.agent_cli --draft-whatsapp
+# or --user-id <uuid> --no-llm
 ```
 
-### Environment
+Needs `OPENROUTER_API_KEY` for LLM drafts (falls back to a template if missing).
+
+### Evals
+
+```bash
+uv run python evals/agent/run_evals.py
+```
+
+Gold sets: `evals/agent/assign_cases.json` and `evals/agent/critical_remark_cases.json`.
+
+## Env
 
 ```env
 SCRAPER_USERNAME=...
 SCRAPER_PASSWORD=...
-DATABASE_URL=postgresql://...   # optional; defaults to local sqlite tickets.db
-INGEST_TOKEN=...                # required in production for /api/ingest/*
-OPENROUTER_API_KEY=...          # only for legacy LLM review flow
+OPENROUTER_API_KEY=...          # WhatsApp drafts only
+OPENROUTER_MODEL=deepseek/deepseek-chat-v3.1
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM=
 ```
 
-## Daily scrape — is it automatic?
+## Logins
 
-**Not yet.** The ingest command exists (`python -m tickets.jobs.ingest_cli --previous-day`), but nothing runs it on a schedule until you deploy a **Railway cron** (or similar) at 09:00 IST. Until then, run ingest manually or set up that cron.
+| User | Password | Role |
+|------|----------|------|
+| admin | Admin@Grit2026! | Admin |
+| poojitha | Poojitha@Grit2026! | SME |
+| mariyam | Mariyam@Grit2026! | SME |
+| viharika | Viharika@Grit2026! | SME |
+| varsha | Varsha@Grit2026! | SME |
+| saifullah | Saifullah@Grit2026! | SME |
 
-### Deploy on Render (recommended free host)
-
-See **[DEPLOY_RENDER.md](DEPLOY_RENDER.md)** for the full steps:
-
-1. Free Postgres on [Neon](https://neon.tech)
-2. Render Blueprint from this repo (`render.yaml`)
-3. GitHub Action for 9 AM IST daily ingest
-
-### Deploy on Railway
-
-Railway is optional/paid for most plans. Prefer Render + Neon for free hosting.
-
-### Login accounts (change passwords after first login)
-
-| Username | Password | Role |
-|----------|----------|------|
-| admin | Admin@Grit2026! | Admin (you) |
-| poojitha | Poojitha@Grit2026! | SME — Quantitative Reasoning |
-| viharika | Viharika@Grit2026! | SME — UI Engineering |
-| varsha | Varsha@Grit2026! | SME — Computational Thinking, SQL |
-| saifullah | Saifullah@Grit2026! | SME — CS Fundamentals, Server Side Engineering |
-| namitha | Namitha@Grit2026! | SME — Critical Thinking & Communication |
-
-GenAI GRIT tickets stay **Unassigned** until you map an SME. Non-GRIT tickets are always Unassigned (admin can assign).
-
-## Legacy local LLM review flow
-
-1. `uv run python main.py` — scrape + LLM MCQ review into `output/<date>/`
-2. `uv run reflex run` — older Reflex SME dashboard (CSV-based)
-
-The ticket board above is the path forward for continuous resolution.
+Deploy notes: see `DEPLOY_RENDER.md` when you are ready to host.

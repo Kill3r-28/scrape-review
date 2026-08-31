@@ -1,0 +1,24 @@
+name: daily-sme-nudge
+
+# 10:00 Asia/Kolkata = 04:30 UTC
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  nudge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger nudge on deployed app (optional)
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$INGEST_TOKEN" ]; then
+            echo "Set APP_URL + INGEST_TOKEN to hit /api/agent/nudge on a host."
+            echo "Locally run: uv run python -m tickets.jobs.agent_cli --nudge"
+            exit 0
+          fi
+          curl -fsS -X POST "${APP_URL%/}/api/agent/nudge" \
+            -H "X-Ingest-Token: ${INGEST_TOKEN}"

@@ -11,8 +11,18 @@
       <h1>{{ ticket.org_assessment_title or "Untitled assessment" }}</h1>
       <div class="chips">
         <span class="badge status-{{ ticket.status }}">{{ ticket.status.replace('_', ' ') }}</span>
+        {% if ticket.criticality == "Critical" %}
+        <span class="badge criticality-critical">Critical</span>
+        {% elif ticket.criticality == "Moderate" %}
+        <span class="badge criticality-moderate">Moderate</span>
+        {% elif ticket.criticality == "Trivial" %}
+        <span class="badge criticality-trivial">Trivial</span>
+        {% endif %}
         {% if ticket.programme == 'GRIT' %}<span class="badge grit">GRIT</span>{% endif %}
+        {% if ticket.programme == 'Intensive Offline' %}<span class="badge intensive">Intensive Offline</span>{% endif %}
+        {% if ticket.programme == 'NIAT Skill Exams' %}<span class="badge niat">NIAT Skill Exams</span>{% endif %}
         {% if ticket.subject %}<span class="badge">{{ ticket.subject }}</span>{% endif %}
+        {% if ticket.question_type %}<span class="badge">{{ ticket.question_type }}</span>{% endif %}
       </div>
     </div>
   </header>
@@ -20,6 +30,35 @@
   <section class="card">
     <h2>Student description</h2>
     <p class="body-text">{{ ticket.student_description or "(empty)" }}</p>
+  </section>
+
+  <section class="card">
+    <h2>Criticality</h2>
+    {% if ticket.criticality %}
+    <p><span class="badge criticality-{{ ticket.criticality|lower }}">{{ ticket.criticality }}</span></p>
+    <p class="body-text">{{ ticket.critical_remark or "(no remark yet)" }}</p>
+    {% else %}
+    <p class="muted">No AI remark yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Question</h2>
+    <p class="muted small">Type: {{ ticket.question_type or "—" }} · ID: <span class="mono">{{ ticket.question_id or "—" }}</span></p>
+    <pre class="body-text question-text">{{ ticket.question_text or "(question text not loaded yet)" }}</pre>
+  </section>
+
+  <section class="card">
+    <h2>Tags</h2>
+    {% if tag_list %}
+    <div class="chips">
+      {% for tag in tag_list %}
+      <span class="badge tag">{{ tag }}</span>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No tags yet{% if ticket.question_id %} — run enrich to fetch{% endif %}.</p>
+    {% endif %}
   </section>
 
   <form class="card form-grid" method="post" action="/tickets/{{ ticket.id }}/update">
@@ -53,17 +92,21 @@
     </div>
   </form>
 
+  {% if not is_admin %}
+  <form class="card" method="post" action="/tickets/{{ ticket.id }}/not-mine">
+    <h2>Wrong queue?</h2>
+    <button type="submit" class="btn-ghost">Mark as Not mine</button>
+    <p class="muted small">Sends this ticket to the admin Not mine queue for reassignment.</p>
+  </form>
+  {% endif %}
+
   <section class="card meta">
     <h2>Report details</h2>
     <dl>
       <div><dt>User id</dt><dd class="mono">{{ ticket.user_id or "—" }}</dd></div>
       <div><dt>Org assessment id</dt><dd class="mono">{{ ticket.org_assessment_id or "—" }}</dd></div>
       <div><dt>Category</dt><dd>{{ ticket.category or "—" }} / {{ ticket.sub_category or "—" }}</dd></div>
-      <div><dt>Question id</dt><dd class="mono">{{ ticket.question_id or "—" }}</dd></div>
-      <div><dt>Question type</dt><dd>{{ ticket.question_type or "—" }}</dd></div>
       <div><dt>Created</dt><dd>{{ ticket.creation_datetime or "—" }}</dd></div>
-      <div class="full"><dt>Question</dt><dd>{{ ticket.question_text or "—" }}</dd></div>
-      <div class="full"><dt>Tags</dt><dd>{{ ticket.question_tags or "—" }}</dd></div>
     </dl>
   </section>
 </article>

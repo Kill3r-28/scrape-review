@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Assignments · Admin{% endblock %}
+{% block content %}
+{% if message %}
+<p class="stat active" style="display:inline-block;margin-bottom:1rem;">{{ message }}</p>
+{% endif %}
+
+<section class="panel" style="margin-bottom:1.25rem;">
+  <div class="panel-head">
+    <h1>Not mine queue</h1>
+    <p class="muted">SMEs marked these as not theirs. Reassign to the correct person.</p>
+  </div>
+  {% if not_mine %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Assessment</th>
+          <th>Tags</th>
+          <th>Assign to</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in not_mine %}
+        <tr>
+          <td class="mono"><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
+          <td class="mono">{{ t.report_date }}</td>
+          <td class="desc">{{ t.student_description }}</td>
+          <td>{{ t.org_assessment_title or "—" }}</td>
+          <td class="muted small">{{ t.question_tags or "—" }}</td>
+          <td>
+            <form method="post" action="/tickets/{{ t.id }}/assign" class="inline-assign">
+              <select name="sme_name" onchange="this.form.submit()">
+                {% for name in assignable_smes %}
+                <option value="{{ name }}">{{ name }}</option>
+                {% endfor %}
+              </select>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty"><p class="muted">No tickets marked Not mine.</p></div>
+  {% endif %}
+</section>
+
+<section class="panel" style="margin-bottom:1.25rem;">
+  <div class="panel-head">
+    <h1>Assessment title → SME</h1>
+    <p class="muted">When the exam/assessment name contains the marker, assign this SME (checked when topic is unclear).</p>
+  </div>
+  <form class="filters" method="post" action="/assignments/rules/add">
+    <input type="hidden" name="rule_type" value="{{ rule_type_assessment }}" />
+    <label>Marker <input name="marker" placeholder="e.g. UI Engineering" required /></label>
+    <label>SME
+      <select name="sme_name">
+        {% for name in assignable_smes %}
+        {% if name != 'Unassigned' %}
+        <option value="{{ name }}">{{ name }}</option>
+        {% endif %}
+        {% endfor %}
+      </select>
+    </label>
+    <label>Priority <input type="number" name="priority" value="5" /></label>
+    <button type="submit">Add title rule</button>
+  </form>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Priority</th><th>Marker</th><th>SME</th><th>Active</th><th></th></tr></thead>
+      <tbody>
+        {% for r in title_rules %}
+        <tr>
+          <td>{{ r.priority }}</td>
+          <td class="mono">{{ r.marker }}</td>
+          <td>{{ r.sme_name }}</td>
+          <td>{{ "yes" if r.active else "no" }}</td>
+          <td class="actions">
+            <form method="post" action="/assignments/rules/{{ r.id }}/toggle"><button class="btn-ghost" type="submit">Toggle</button></form>
+            <form method="post" action="/assignments/rules/{{ r.id }}/delete"><button class="btn-ghost" type="submit">Delete</button></form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel" style="margin-bottom:1.25rem;">
+  <div class="panel-head">
+    <h1>Topic tag → SME</h1>
+    <p class="muted">Matched against question TOPIC_* tags (substring, case-insensitive). Lower priority number wins first.</p>
+  </div>
+  <form class="filters" method="post" action="/assignments/rules/add">
+    <input type="hidden" name="rule_type" value="{{ rule_type_topic }}" />
+    <label>Marker <input name="marker" placeholder="e.g. REACT or QUANTITATIVE" required /></label>
+    <label>SME
+      <select name="sme_name">
+        {% for name in assignable_smes %}
+        {% if name != 'Unassigned' %}
+        <option value="{{ name }}">{{ name }}</option>
+        {% endif %}
+        {% endfor %}
+      </select>
+    </label>
+    <label>Priority <input type="number" name="priority" value="50" /></label>
+    <button type="submit">Add topic rule</button>
+  </form>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Priority</th><th>Marker</th><th>SME</th><th>Active</th><th></th></tr></thead>
+      <tbody>
+        {% for r in topic_rules %}
+        <tr>
+          <td>{{ r.priority }}</td>
+          <td class="mono">{{ r.marker }}</td>
+          <td>{{ r.sme_name }}</td>
+          <td>{{ "yes" if r.active else "no" }}</td>
+          <td class="actions">
+            <form method="post" action="/assignments/rules/{{ r.id }}/toggle"><button class="btn-ghost" type="submit">Toggle</button></form>
+            <form method="post" action="/assignments/rules/{{ r.id }}/delete"><button class="btn-ghost" type="submit">Delete</button></form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<form method="post" action="/assignments/reapply" class="filters">
+  <button type="submit">Re-apply rules to all tickets (keeps Not mine)</button>
+</form>
+{% endblock %}

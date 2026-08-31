@@ -8,9 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
 COPY pyproject.toml README.md ./
-COPY scrape.py review.py main.py prompts.md rxconfig.py ./
+COPY scrape.py main.py ./
 COPY tickets ./tickets
-COPY dashboard ./dashboard
+COPY evals ./evals
 
 RUN pip install --upgrade pip \
     && pip install \

@@ -72,6 +72,7 @@
       <option value="">All</option>
       <option value="GRIT" {% if filters.programme == 'GRIT' %}selected{% endif %}>GRIT</option>
       <option value="NIAT Skill Exams" {% if filters.programme == 'NIAT Skill Exams' %}selected{% endif %}>NIAT Skill Exams</option>
+      <option value="Intensive Offline" {% if filters.programme == 'Intensive Offline' %}selected{% endif %}>Intensive Offline</option>
       <option value="Other" {% if filters.programme == 'Other' %}selected{% endif %}>Other</option>
     </select>
   </label>
@@ -117,6 +118,7 @@
           <th>ID</th>
           <th>Date</th>
           <th>Student description</th>
+          <th>Criticality</th>
           <th>Status</th>
           <th>SME</th>
           <th>Assessment</th>
@@ -131,6 +133,17 @@
           <td class="mono">{{ t.report_date or "—" }}</td>
           <td class="desc">
             <a href="/tickets/{{ t.id }}">{{ t.student_description or "(no description)" }}</a>
+          </td>
+          <td>
+            {% if t.criticality == "Critical" %}
+            <span class="badge criticality-critical">Critical</span>
+            {% elif t.criticality == "Moderate" %}
+            <span class="badge criticality-moderate">Moderate</span>
+            {% elif t.criticality == "Trivial" %}
+            <span class="badge criticality-trivial">Trivial</span>
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
           </td>
           <td><span class="badge status-{{ t.status }}">{{ t.status.replace('_', ' ') }}</span></td>
           <td>
@@ -153,6 +166,8 @@
           <td>
             {% if t.programme == programme_grit %}
             <span class="badge grit">GRIT</span>
+            {% elif t.programme == programme_intensive %}
+            <span class="badge intensive">Intensive Offline</span>
             {% elif t.programme == programme_niat %}
             <span class="badge niat">NIAT Skill Exams</span>
             {% else %}
@@ -164,6 +179,11 @@
             <form method="post" action="/tickets/{{ t.id }}/quick-resolve">
               <button type="submit" class="btn-resolve">Resolve</button>
             </form>
+            {% if not is_admin %}
+            <form method="post" action="/tickets/{{ t.id }}/not-mine">
+              <button type="submit" class="btn-ghost">Not mine</button>
+            </form>
+            {% endif %}
             {% elif is_admin %}
             <form method="post" action="/tickets/{{ t.id }}/quick-open">
               <button type="submit" class="btn-ghost">Reopen</button>

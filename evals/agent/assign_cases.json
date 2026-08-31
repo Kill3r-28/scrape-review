@@ -1,0 +1,56 @@
+[
+  {
+    "id": "assign_quant",
+    "question_tags": "TOPIC_QUANTITATIVE_NIAT_ENTRANCE_MCQ, DIFFICULTY_MEDIUM",
+    "org_assessment_title": "NIAT Entrance",
+    "expected_sme": "Poojitha Pachava"
+  },
+  {
+    "id": "assign_logical",
+    "question_tags": "TOPIC_LOGICAL_MCQ",
+    "org_assessment_title": "Other",
+    "expected_sme": "Poojitha Pachava"
+  },
+  {
+    "id": "assign_verbal",
+    "question_tags": "TOPIC_VERBAL_ABILITY_MCQ",
+    "org_assessment_title": "Weekly Assessment - 1",
+    "expected_sme": "Mariyam"
+  },
+  {
+    "id": "assign_frontend",
+    "question_tags": "TOPIC_HTML_CSS_MCQ, TOPIC_REACT_MCQ",
+    "org_assessment_title": "Frontend",
+    "expected_sme": "Viharika"
+  },
+  {
+    "id": "assign_coding",
+    "question_tags": "TOPIC_JS_CODING, TOPIC_DSA_CODING",
+    "org_assessment_title": "Coding",
+    "expected_sme": "Varsha"
+  },
+  {
+    "id": "assign_sql",
+    "question_tags": "TOPIC_SQL_CODING",
+    "org_assessment_title": "SQL - L1",
+    "expected_sme": "Varsha"
+  },
+  {
+    "id": "assign_cs",
+    "question_tags": "TOPIC_CS_FUNDAMENTALS_MCQ",
+    "org_assessment_title": "CS Fundamentals - L1",
+    "expected_sme": "Saifullah"
+  },
+  {
+    "id": "assign_misc_topic",
+    "question_tags": "TOPIC_GRIT_GENAI",
+    "org_assessment_title": "GenAI",
+    "expected_sme": "Saifullah"
+  },
+  {
+    "id": "assign_no_tags",
+    "question_tags": "",
+    "org_assessment_title": "Something",
+    "expected_sme": "Unassigned"
+  }
+]

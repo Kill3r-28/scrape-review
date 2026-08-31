@@ -3,12 +3,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Login · SME Tickets</title>
+  <title>Login · topin.tech</title>
+  <link rel="icon" href="/static/topin-icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body class="login-body">
   <main class="login-card">
-    <h1>SME Ticket Resolution</h1>
+    <a href="/" class="brand-link login-brand">
+      <img src="/static/topin-icon.svg" alt="" class="topin-icon" width="32" height="32" />
+      <span class="brand-wordmark">topin<span class="brand-dottech">.tech</span></span>
+    </a>
+    <h1>Ticket resolution</h1>
     <p class="muted">Sign in to view and resolve student report tickets.</p>
     {% if error %}
     <p class="error">{{ error }}</p>
@@ -22,7 +27,7 @@
         Password
         <input type="password" name="password" autocomplete="current-password" required />
       </label>
-      <button type="submit">Sign in</button>
+      <button type="submit" class="btn-gradient">Sign in</button>
     </form>
   </main>
 </body>

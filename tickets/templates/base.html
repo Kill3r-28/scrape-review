@@ -3,17 +3,26 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{% block title %}SME Tickets{% endblock %}</title>
+  <title>{% block title %}topin.tech · Tickets{% endblock %}</title>
+  <link rel="icon" href="/static/topin-icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/static/styles.css" />
+  {% if auto_refresh_seconds %}
+  <meta http-equiv="refresh" content="{{ auto_refresh_seconds }}" />
+  {% endif %}
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <a href="/">SME Ticket Resolution</a>
-      <span class="muted">Student reports → open tickets</span>
+      <a href="/" class="brand-link">
+        <img src="/static/topin-icon.svg" alt="" class="topin-icon" width="28" height="28" />
+        <span class="brand-wordmark">topin<span class="brand-dottech">.tech</span></span>
+      </a>
     </div>
     <div class="topbar-right">
       {% if user %}
+      <a href="/">Tickets</a>
+      <a href="/whatsapp">WhatsApp</a>
+      {% if is_admin %}<a href="/assignments">Assignments</a>{% endif %}
       <span class="muted">{{ user.display_name }} · {{ user.role }}</span>
       <form method="post" action="/logout" class="inline">
         <button type="submit" class="btn-ghost">Log out</button>
