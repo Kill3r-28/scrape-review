@@ -42,16 +42,6 @@
     {% block content %}{% endblock %}
   </main>
   {% block scripts %}{% endblock %}
-  <script>
-    (function () {
-      var form = document.getElementById("admin-update-form");
-      var btn = document.getElementById("admin-update-btn");
-      if (!form || !btn) return;
-      form.addEventListener("submit", function () {
-        btn.disabled = true;
-        btn.textContent = "Updating…";
-      });
-    })();
-  </script>
+  <script src="/static/update-progress.js"></script>
 </body>
 </html>

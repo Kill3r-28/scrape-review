@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 from calendar import monthrange
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import quote_plus
 
 from fastapi import Depends, FastAPI, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
@@ -249,6 +249,100 @@ def logout():
     return response
 
 
+def _month_update_range(year: int | None, month: int | None) -> tuple[date, date, int, int] | None:
+    today = date.today()
+    target_year = year or today.year
+    target_month = month or today.month
+    if target_month < 1 or target_month > 12:
+        target_year, target_month = today.year, today.month
+    start = date(target_year, target_month, 1)
+    last_day = monthrange(target_year, target_month)[1]
+    end = date(target_year, target_month, last_day)
+    if end > today:
+        end = today
+    if start > today:
+        return None
+    return start, end, target_year, target_month
+
+
+@app.get("/admin/update-reports/plan")
+def admin_update_plan(
+    request: Request,
+    year: int | None = Query(None),
+    month: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return JSONResponse({"ok": False, "error": "Admin only"}, status_code=403)
+    bounds = _month_update_range(year, month)
+    if not bounds:
+        return JSONResponse(
+            {"ok": False, "error": "That month is in the future — nothing to update"}
+        )
+    start, end, target_year, target_month = bounds
+    dates: list[str] = []
+    cursor = start
+    while cursor <= end:
+        dates.append(cursor.isoformat())
+        cursor += timedelta(days=1)
+    return {
+        "ok": True,
+        "year": target_year,
+        "month": target_month,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "dates": dates,
+        "total_days": len(dates),
+    }
+
+
+@app.post("/admin/update-reports/day")
+async def admin_update_day(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return JSONResponse({"ok": False, "error": "Admin only"}, status_code=403)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    day_raw = str((body or {}).get("date", "")).strip()
+    try:
+        target = date.fromisoformat(day_raw)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Invalid date"}, status_code=400)
+    try:
+        result = ingest_date(db, target, enrich=True)
+        return {
+            "ok": True,
+            "date": target.isoformat(),
+            "created": result.get("created", 0),
+            "skipped": result.get("skipped", 0),
+            "total_rows": result.get("total_rows", 0),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {
+                "ok": False,
+                "date": target.isoformat(),
+                "error": str(exc)[:240],
+            },
+            status_code=500,
+        )
+
+
+@app.post("/admin/update-reports/finalize")
+def admin_update_finalize(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return JSONResponse({"ok": False, "error": "Admin only"}, status_code=403)
+    try:
+        crit = assign_criticality_all(db, only_missing=True)
+        return {"ok": True, "criticality_updated": crit.get("updated", 0)}
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": str(exc)[:240]}, status_code=500)
+
+
 @app.post("/admin/update-reports")
 def admin_update_reports(
     request: Request,
@@ -256,27 +350,20 @@ def admin_update_reports(
     month: int | None = Form(None),
     db: Session = Depends(get_db),
 ):
-    """Admin-only: scrape reports for the calendar month currently being viewed."""
+    """Fallback full-month update (non-JS). Prefer day-by-day UI flow."""
     user = get_current_user(request, db)
     if not user or not is_admin(user):
         return RedirectResponse("/", status_code=303)
 
-    today = date.today()
-    target_year = year or today.year
-    target_month = month or today.month
-    if target_month < 1 or target_month > 12:
-        target_year, target_month = today.year, today.month
-
-    start = date(target_year, target_month, 1)
-    last_day = monthrange(target_year, target_month)[1]
-    end = date(target_year, target_month, last_day)
-    if end > today:
-        end = today
-    if start > today:
+    bounds = _month_update_range(year, month)
+    if not bounds:
+        today = date.today()
         return RedirectResponse(
-            f"/?msg={quote_plus('That month is in the future — nothing to update')}&cal_year={target_year}&cal_month={target_month}",
+            f"/?msg={quote_plus('That month is in the future — nothing to update')}"
+            f"&cal_year={year or today.year}&cal_month={month or today.month}",
             status_code=303,
         )
+    start, end, target_year, target_month = bounds
 
     try:
         result = ingest_date_range(db, start, end, enrich=True)
@@ -288,7 +375,7 @@ def admin_update_reports(
             f"skipped {result.get('skipped', 0)}, "
             f"criticality {crit.get('updated', 0)}"
         )
-    except Exception as exc:  # noqa: BLE001 — surface scrape failures to admin
+    except Exception as exc:  # noqa: BLE001
         msg = f"Update failed: {str(exc)[:160]}"
 
     return RedirectResponse(
@@ -379,7 +466,7 @@ def ticket_board(
             "assignable_smes": list_assignable_smes(db),
             "not_mine_label": SME_NOT_MINE,
             "current_sme_name": user.display_name if user.role == ROLE_SME else "",
-            "auto_refresh_seconds": 30 if is_admin(user) else 0,
+            "auto_refresh_seconds": 0,
             "message": request.query_params.get("msg", ""),
             "statuses": TICKET_STATUSES,
             "grit_subjects": GRIT_SUBJECTS,
