@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Open tickets · SME{% endblock %}
+{% block admin_update_fields %}
+{% if calendar %}
+<input type="hidden" name="year" value="{{ calendar.year }}" />
+<input type="hidden" name="month" value="{{ calendar.month }}" />
+{% endif %}
+{% endblock %}
 {% block content %}
 {% set list_return_to = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
 {% if message %}

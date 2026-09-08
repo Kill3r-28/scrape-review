@@ -26,7 +26,8 @@
       <a href="/">Tickets</a>
       {% if is_admin %}
       <form method="post" action="/admin/update-reports" class="inline" id="admin-update-form">
-        <button type="submit" class="btn-ghost" id="admin-update-btn" title="Scrape and import reports for this month through today">Update</button>
+        {% block admin_update_fields %}{% endblock %}
+        <button type="submit" class="btn-ghost" id="admin-update-btn" title="Scrape and import reports for the month shown on the calendar">Update</button>
       </form>
       <a href="/assignments">Assignments</a>
       {% endif %}

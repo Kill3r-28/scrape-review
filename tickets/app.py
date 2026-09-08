@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from calendar import monthrange
 from datetime import date
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -242,21 +243,40 @@ def logout():
 
 
 @app.post("/admin/update-reports")
-def admin_update_reports(request: Request, db: Session = Depends(get_db)):
-    """Admin-only: scrape reports from the 1st of this month through today."""
+def admin_update_reports(
+    request: Request,
+    year: int | None = Form(None),
+    month: int | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Admin-only: scrape reports for the calendar month currently being viewed."""
     user = get_current_user(request, db)
     if not user or not is_admin(user):
         return RedirectResponse("/", status_code=303)
 
     today = date.today()
-    start = date(today.year, today.month, 1)
+    target_year = year or today.year
+    target_month = month or today.month
+    if target_month < 1 or target_month > 12:
+        target_year, target_month = today.year, today.month
+
+    start = date(target_year, target_month, 1)
+    last_day = monthrange(target_year, target_month)[1]
+    end = date(target_year, target_month, last_day)
+    if end > today:
+        end = today
+    if start > today:
+        return RedirectResponse(
+            f"/?msg={quote_plus('That month is in the future — nothing to update')}&cal_year={target_year}&cal_month={target_month}",
+            status_code=303,
+        )
 
     try:
-        result = ingest_date_range(db, start, today, enrich=True)
+        result = ingest_date_range(db, start, end, enrich=True)
         crit = assign_criticality_all(db, only_missing=True)
         msg = (
             f"Updated {result.get('start_date', start.isoformat())} → "
-            f"{result.get('end_date', today.isoformat())}: "
+            f"{result.get('end_date', end.isoformat())}: "
             f"created {result.get('created', 0)}, "
             f"skipped {result.get('skipped', 0)}, "
             f"criticality {crit.get('updated', 0)}"
@@ -264,7 +284,10 @@ def admin_update_reports(request: Request, db: Session = Depends(get_db)):
     except Exception as exc:  # noqa: BLE001 — surface scrape failures to admin
         msg = f"Update failed: {str(exc)[:160]}"
 
-    return RedirectResponse(f"/?msg={quote_plus(msg)}", status_code=303)
+    return RedirectResponse(
+        f"/?msg={quote_plus(msg)}&cal_year={target_year}&cal_month={target_month}",
+        status_code=303,
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
