@@ -134,10 +134,10 @@ def _load_rules(db: Session | None, rule_type: str) -> list[tuple[int, str, str]
     rows = (
         db.query(AssignmentRule)
         .filter(AssignmentRule.rule_type == rule_type, AssignmentRule.active.is_(True))
-        .order_by(AssignmentRule.priority.asc(), AssignmentRule.id.asc())
+        .order_by(AssignmentRule.id.desc())
         .all()
     )
-    return [(r.priority, r.marker, r.sme_name) for r in rows]
+    return [(r.id, r.marker, r.sme_name) for r in rows]
 
 
 def assign_sme_from_assessment_title(
@@ -147,7 +147,7 @@ def assign_sme_from_assessment_title(
     title_lower = (org_assessment_title or "").strip().lower()
     if not title_lower:
         return None
-    for _priority, marker, sme_name in _load_rules(db, RULE_TYPE_ASSESSMENT):
+    for _order, marker, sme_name in _load_rules(db, RULE_TYPE_ASSESSMENT):
         if marker.lower() in title_lower:
             return sme_name
     return None
@@ -164,7 +164,7 @@ def assign_sme_from_tags(
         return SME_UNASSIGNED
 
     blob = " ".join(topics).upper()
-    for _priority, marker, sme_name in _load_rules(db, RULE_TYPE_TOPIC):
+    for _order, marker, sme_name in _load_rules(db, RULE_TYPE_TOPIC):
         if marker.upper() in blob:
             return sme_name
     if any(t.upper().startswith("TOPIC_") for t in parse_tags(question_tags)):

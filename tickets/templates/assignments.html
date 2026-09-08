@@ -92,7 +92,7 @@
 <section class="panel" style="margin-bottom:1.25rem;">
   <div class="panel-head">
     <h1>Assessment title → SME</h1>
-    <p class="muted">When the exam/assessment name contains the marker, assign this SME (checked when topic is unclear).</p>
+    <p class="muted">When the exam/assessment name contains the marker, assign this SME. Newest rules are checked first.</p>
   </div>
   <form class="filters" method="post" action="/assignments/rules/add">
     <input type="hidden" name="rule_type" value="{{ rule_type_assessment }}" />
@@ -106,16 +106,14 @@
         {% endfor %}
       </select>
     </label>
-    <label>Priority <input type="number" name="priority" value="5" /></label>
     <button type="submit">Add title rule</button>
   </form>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Priority</th><th>Marker</th><th>SME</th><th>Active</th><th></th></tr></thead>
+      <thead><tr><th>Marker</th><th>SME</th><th>Active</th><th></th></tr></thead>
       <tbody>
         {% for r in title_rules %}
         <tr>
-          <td>{{ r.priority }}</td>
           <td class="mono">{{ r.marker }}</td>
           <td>{{ r.sme_name }}</td>
           <td>{{ "yes" if r.active else "no" }}</td>
@@ -133,7 +131,7 @@
 <section class="panel" style="margin-bottom:1.25rem;">
   <div class="panel-head">
     <h1>Topic tag → SME</h1>
-    <p class="muted">Matched against question TOPIC_* tags (substring, case-insensitive). Lower priority number wins first.</p>
+    <p class="muted">Matched against question TOPIC_* tags (substring, case-insensitive). Newest rules are checked first.</p>
   </div>
   <form class="filters" method="post" action="/assignments/rules/add">
     <input type="hidden" name="rule_type" value="{{ rule_type_topic }}" />
@@ -147,16 +145,14 @@
         {% endfor %}
       </select>
     </label>
-    <label>Priority <input type="number" name="priority" value="50" /></label>
     <button type="submit">Add topic rule</button>
   </form>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Priority</th><th>Marker</th><th>SME</th><th>Active</th><th></th></tr></thead>
+      <thead><tr><th>Marker</th><th>SME</th><th>Active</th><th></th></tr></thead>
       <tbody>
         {% for r in topic_rules %}
         <tr>
-          <td>{{ r.priority }}</td>
           <td class="mono">{{ r.marker }}</td>
           <td>{{ r.sme_name }}</td>
           <td>{{ "yes" if r.active else "no" }}</td>

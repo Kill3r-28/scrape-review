@@ -648,13 +648,13 @@ def assignments_page(request: Request, db: Session = Depends(get_db)):
     topic_rules = (
         db.query(AssignmentRule)
         .filter(AssignmentRule.rule_type == RULE_TYPE_TOPIC)
-        .order_by(AssignmentRule.priority.asc(), AssignmentRule.id.asc())
+        .order_by(AssignmentRule.id.desc())
         .all()
     )
     title_rules = (
         db.query(AssignmentRule)
         .filter(AssignmentRule.rule_type == RULE_TYPE_ASSESSMENT)
-        .order_by(AssignmentRule.priority.asc(), AssignmentRule.id.asc())
+        .order_by(AssignmentRule.id.desc())
         .all()
     )
     return templates.TemplateResponse(
@@ -690,7 +690,6 @@ def add_assignment_rule(
     rule_type: str = Form(...),
     marker: str = Form(...),
     sme_name: str = Form(...),
-    priority: int = Form(100),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -708,7 +707,7 @@ def add_assignment_rule(
             rule_type=rule_type,
             marker=marker,
             sme_name=sme_name,
-            priority=priority,
+            priority=100,
             active=True,
         )
     )

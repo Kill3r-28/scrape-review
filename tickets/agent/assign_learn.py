@@ -134,7 +134,6 @@ def _upsert_rule(db: Session, rule_type: str, marker: str, sme_name: str) -> boo
     if existing:
         if not existing.active:
             existing.active = True
-            existing.priority = min(existing.priority, 3)
             return True
         return False
     db.add(
@@ -142,7 +141,7 @@ def _upsert_rule(db: Session, rule_type: str, marker: str, sme_name: str) -> boo
             rule_type=rule_type,
             marker=marker,
             sme_name=sme_name,
-            priority=3,
+            priority=100,
             active=True,
         )
     )
