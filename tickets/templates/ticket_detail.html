@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Ticket #{{ ticket.id }}{% endblock %}
 {% block header_back %}
-<button type="button" class="nav-back" data-nav-back {% if return_to %}data-nav-back-fallback="{{ return_to }}"{% endif %} aria-label="Go back to previous page">← All tickets</button>
+<a class="nav-back" href="{{ return_to or '/' }}" aria-label="Go back to filtered ticket list">← All tickets</a>
 {% endblock %}
 {% block content %}
 {% if error %}
@@ -66,6 +66,7 @@
 
   {% if can_edit %}
   <form class="card form-grid" method="post" action="/tickets/{{ ticket.id }}/update">
+    {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}" />{% endif %}
     <h2>Resolution</h2>
     <label>
       Ticket status
@@ -105,11 +106,12 @@
   {% if can_mark_not_mine %}
   <section class="card">
     <h2>Wrong queue?</h2>
-    <button type="button" class="btn-ghost" data-not-mine data-not-mine-action="/tickets/{{ ticket.id }}/not-mine" data-not-mine-label="Ticket #{{ ticket.id }}">Mark as Not mine</button>
+    <button type="button" class="btn-ghost" data-not-mine data-not-mine-action="/tickets/{{ ticket.id }}/not-mine" data-not-mine-label="Ticket #{{ ticket.id }}" {% if return_to %}data-return-to="{{ return_to }}"{% endif %}>Mark as Not mine</button>
     <p class="muted small">Opens a dialog — your reason is saved to learning_points.txt for assignment improvements.</p>
   </section>
   {% elif can_claim %}
   <form class="card" method="post" action="/tickets/{{ ticket.id }}/claim">
+    {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}" />{% endif %}
     <h2>Take this ticket?</h2>
     <p class="muted">Currently assigned to <strong>{{ ticket.sme_name }}</strong>.</p>
     <button type="submit">Claim mine</button>
@@ -130,5 +132,4 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/board.js"></script>
-<script src="/static/nav.js"></script>
 {% endblock %}

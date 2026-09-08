@@ -6,9 +6,12 @@
   const reason = modal.querySelector('textarea[name="reason"]');
   const title = modal.querySelector("[data-modal-title]");
 
-  function openModal(action, ticketLabel) {
+  const returnInput = modal.querySelector("[data-return-to-input]");
+
+  function openModal(action, ticketLabel, returnTo) {
     form.action = action;
     reason.value = "";
+    if (returnInput) returnInput.value = returnTo || "";
     if (title) title.textContent = ticketLabel || "Why isn't this ticket yours?";
     modal.hidden = false;
     document.body.classList.add("modal-open");
@@ -22,7 +25,11 @@
 
   document.querySelectorAll("[data-not-mine]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      openModal(btn.dataset.notMineAction, btn.dataset.notMineLabel || "");
+      openModal(
+        btn.dataset.notMineAction,
+        btn.dataset.notMineLabel || "",
+        btn.dataset.returnTo || ""
+      );
     });
   });
 

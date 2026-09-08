@@ -7,7 +7,16 @@
 {% endif %}
 {% endblock %}
 {% block content %}
-{% set list_return_to = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
+{% set list_return_to = '/?' ~ (
+  'status=' ~ (filters.status or 'all') ~
+  '&programme=' ~ (filters.programme or '') ~
+  '&sme=' ~ (filters.sme or '') ~
+  '&start_date=' ~ (filters.start_date or '') ~
+  '&end_date=' ~ (filters.end_date or '') ~
+  '&q=' ~ (filters.q or '') ~
+  '&cal_year=' ~ calendar.year ~
+  '&cal_month=' ~ calendar.month
+) %}
 {% if message %}
 <p class="flash-msg">{{ message }}</p>
 {% endif %}

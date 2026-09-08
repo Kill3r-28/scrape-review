@@ -398,6 +398,14 @@ def ticket_board(
     )
 
 
+def ticket_detail_url(ticket_id: int, return_to: str = "") -> str:
+    base = f"/tickets/{ticket_id}"
+    cleaned = safe_return_to(return_to)
+    if cleaned:
+        return f"{base}?return_to={quote_plus(cleaned)}"
+    return base
+
+
 @app.get("/tickets/{ticket_id}", response_class=HTMLResponse)
 def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
@@ -408,6 +416,7 @@ def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db
     if not ticket or not can_view_ticket(user, ticket):
         return RedirectResponse("/", status_code=303)
 
+    return_to = safe_return_to(request.query_params.get("return_to", ""))
     return templates.TemplateResponse(
         request,
         "ticket_detail.html",
@@ -419,7 +428,7 @@ def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db
             "can_claim": can_claim_ticket(user, ticket),
             "can_edit": can_edit_ticket(user, ticket),
             "error": request.query_params.get("err", ""),
-            "return_to": safe_return_to(request.query_params.get("return_to", "")),
+            "return_to": return_to,
             "tag_list": [t.strip() for t in (ticket.question_tags or "").split(",") if t.strip()],
             "statuses": TICKET_STATUSES,
             "assignable_smes": list_assignable_smes(db)
@@ -436,6 +445,7 @@ def update_ticket(
     status: str = Form(...),
     sme_name: str = Form(""),
     notes: str = Form(""),
+    return_to: str = Form(""),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -459,7 +469,7 @@ def update_ticket(
             new_status = ticket.status
 
     set_ticket_status(db, ticket, new_status)
-    return RedirectResponse(f"/tickets/{ticket_id}", status_code=303)
+    return RedirectResponse(ticket_detail_url(ticket_id, return_to), status_code=303)
 
 
 @app.post("/tickets/{ticket_id}/quick-resolve")
@@ -580,6 +590,7 @@ def mark_not_mine(
     ticket_id: int,
     request: Request,
     reason: str = Form(...),
+    return_to: str = Form(""),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -587,11 +598,15 @@ def mark_not_mine(
         return _login_redirect()
     ticket = db.get(Ticket, ticket_id)
     reason = reason.strip()
+    back = safe_return_to(return_to) or request.headers.get("referer", "/")
     if not ticket or not can_mark_not_mine(user, ticket):
-        return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+        return RedirectResponse(back, status_code=303)
     if len(reason) < 8:
+        detail = ticket_detail_url(ticket_id, return_to)
+        sep = "&" if "?" in detail else "?"
         return RedirectResponse(
-            f"/tickets/{ticket_id}?err=Please+explain+why+this+ticket+is+not+yours+(min+8+chars)",
+            f"{detail}{sep}err="
+            + quote_plus("Please explain why this ticket is not yours (min 8 chars)"),
             status_code=303,
         )
     record_not_mine_feedback(db, ticket, from_sme=user.display_name, reason=reason)
@@ -600,20 +615,28 @@ def mark_not_mine(
         ticket.status = STATUS_OPEN
         ticket.resolved_at = None
     db.commit()
-    return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+    return RedirectResponse(safe_return_to(return_to) or "/", status_code=303)
 
 
 @app.post("/tickets/{ticket_id}/claim")
-def claim_ticket(ticket_id: int, request: Request, db: Session = Depends(get_db)):
+def claim_ticket(
+    ticket_id: int,
+    request: Request,
+    return_to: str = Form(""),
+    db: Session = Depends(get_db),
+):
     user = get_current_user(request, db)
     if not user:
         return _login_redirect()
     ticket = db.get(Ticket, ticket_id)
     if not ticket or not can_claim_ticket(user, ticket):
-        return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+        return RedirectResponse(
+            safe_return_to(return_to) or request.headers.get("referer", "/"),
+            status_code=303,
+        )
     ticket.sme_name = user.display_name
     db.commit()
-    return RedirectResponse(request.headers.get("referer", f"/tickets/{ticket_id}"), status_code=303)
+    return RedirectResponse(ticket_detail_url(ticket_id, return_to), status_code=303)
 
 
 @app.get("/assignments", response_class=HTMLResponse)

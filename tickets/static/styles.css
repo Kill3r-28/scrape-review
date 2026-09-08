@@ -56,6 +56,25 @@ a:hover { color: #7f1f96; text-decoration: underline; }
   gap: 0.65rem;
   min-width: 0;
 }
+a.nav-back {
+  flex-shrink: 0;
+  border: 1px solid var(--line-soft);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+a.nav-back:hover {
+  border-color: rgba(227, 91, 176, 0.35);
+  color: #7f1f96;
+  text-decoration: none;
+}
 .nav-back {
   flex-shrink: 0;
   border: 1px solid var(--line-soft);

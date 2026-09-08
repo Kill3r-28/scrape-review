@@ -3,6 +3,7 @@
     <h2 id="not-mine-modal-title" data-modal-title>Why isn't this ticket yours?</h2>
     <p class="muted small">Your answer is saved to <code>learning_points.txt</code> so assignment rules can be improved.</p>
     <form method="post" action="">
+      <input type="hidden" name="return_to" value="" data-return-to-input />
       <label class="full">
         Reason
         <textarea name="reason" rows="4" required minlength="8" placeholder="e.g. This is a React topic — Viharika handles frontend."></textarea>
