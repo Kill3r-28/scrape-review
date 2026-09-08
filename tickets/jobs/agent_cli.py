@@ -6,6 +6,7 @@ import argparse
 import json
 
 from scrape import ENV_PATH, load_dotenv
+from tickets.agent.assign_learn import apply_not_mine_learnings
 from tickets.agent.criticality import assign_criticality_all
 from tickets.agent.draft import draft_whatsapp_for_user, draft_whatsapp_for_users_with_notes
 from tickets.agent.nudge import run_daily_sme_nudges
@@ -37,6 +38,11 @@ def main() -> int:
         action="store_true",
         help="With --assign-criticality, skip tickets that already have a label",
     )
+    parser.add_argument(
+        "--apply-not-mine-feedback",
+        action="store_true",
+        help="Turn Not mine SME feedback into assignment rules and re-route tickets",
+    )
     args = parser.parse_args()
 
     init_db()
@@ -45,6 +51,16 @@ def main() -> int:
         if args.reassign:
             n = apply_sme_routing(db)
             print(f"Reassigned {n} tickets from topic tags")
+            return 0
+        if args.apply_not_mine_feedback:
+            result = apply_not_mine_learnings(db)
+            print(
+                "Not mine learnings applied: "
+                f"feedback={result['feedback_applied']} "
+                f"rules_added={result['rules_added']} "
+                f"rerouted={result['tickets_rerouted']} "
+                f"not_mine_cleared={result['not_mine_cleared']}"
+            )
             return 0
         if args.assign_criticality:
             result = assign_criticality_all(
@@ -74,7 +90,10 @@ def main() -> int:
                 )
                 print(f"Drafted {len(drafts)} WhatsApp message(s)")
             return 0
-        parser.error("Provide --nudge, --draft-whatsapp / --user-id, --reassign, or --assign-criticality")
+        parser.error(
+            "Provide --nudge, --draft-whatsapp / --user-id, --reassign, "
+            "--assign-criticality, or --apply-not-mine-feedback"
+        )
         return 2
     finally:
         db.close()

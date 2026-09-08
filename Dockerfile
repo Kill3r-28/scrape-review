@@ -21,7 +21,8 @@ RUN pip install --upgrade pip \
       "python-multipart>=0.0.9" \
       "psycopg[binary]>=3.2.0" \
       "requests>=2.32.0" \
-      "beautifulsoup4>=4.12.0"
+      "beautifulsoup4>=4.12.0" \
+      "httpx>=0.27.0"
 
 EXPOSE 8000
 CMD ["sh", "-c", "uvicorn tickets.app:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Open tickets · SME{% endblock %}
 {% block content %}
+{% set list_return_to = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
+{% if message %}
+<p class="flash-msg">{{ message }}</p>
+{% endif %}
 <section class="calendar-panel">
   <div class="calendar-nav">
     <a class="btn-ghost" href="{{ calendar.prev_href }}">← Previous</a>
@@ -86,6 +90,19 @@
       {% endfor %}
     </select>
   </label>
+  {% else %}
+  <label>
+    Assigned SME
+    <select name="sme">
+      <option value="">All</option>
+      <option value="{{ current_sme_name }}" {% if filters.sme == current_sme_name %}selected{% endif %}>Assigned to me</option>
+      {% for name in sme_names %}
+      {% if name != current_sme_name %}
+      <option value="{{ name }}" {% if filters.sme == name %}selected{% endif %}>{{ name }}</option>
+      {% endif %}
+      {% endfor %}
+    </select>
+  </label>
   {% endif %}
   <label class="grow">
     Search
@@ -97,7 +114,7 @@
 
 <section class="panel">
   <div class="panel-head">
-    <h1>{% if is_admin %}All tickets{% else %}My tickets{% endif %}</h1>
+    <h1>All tickets</h1>
     <p class="muted">
       {% if filters.start_date or filters.end_date %}
       Showing {{ filters.start_date or "…" }} → {{ filters.end_date or "…" }}.
@@ -105,7 +122,7 @@
       {% if is_admin %}
       Assign Unassigned tickets and resolve any ticket.
       {% else %}
-      Tickets assigned to you. Update status or mark resolved when done.
+      Everyone sees the full board. Rows highlighted in blue are assigned to you — resolve those or mark <em>Not mine</em> with a short reason if misrouted.
       {% endif %}
     </p>
   </div>
@@ -128,11 +145,11 @@
       </thead>
       <tbody>
         {% for t in tickets %}
-        <tr>
-          <td class="mono"><a href="/tickets/{{ t.id }}">#{{ t.id }}</a></td>
+        <tr class="{% if not is_admin and t.sme_name == current_sme_name %}assigned-me{% endif %}">
+          <td class="mono"><a href="/tickets/{{ t.id }}?return_to={{ list_return_to | urlencode }}">#{{ t.id }}</a></td>
           <td class="mono">{{ t.report_date or "—" }}</td>
           <td class="desc">
-            <a href="/tickets/{{ t.id }}">{{ t.student_description or "(no description)" }}</a>
+            <a href="/tickets/{{ t.id }}?return_to={{ list_return_to | urlencode }}">{{ t.student_description or "(no description)" }}</a>
           </td>
           <td>
             {% if t.criticality == "Critical" %}
@@ -176,12 +193,16 @@
           </td>
           <td class="actions">
             {% if t.status != 'resolved' %}
+            {% if is_admin or (not is_admin and t.sme_name == current_sme_name) %}
             <form method="post" action="/tickets/{{ t.id }}/quick-resolve">
               <button type="submit" class="btn-resolve">Resolve</button>
             </form>
-            {% if not is_admin %}
-            <form method="post" action="/tickets/{{ t.id }}/not-mine">
-              <button type="submit" class="btn-ghost">Not mine</button>
+            {% endif %}
+            {% if not is_admin and t.sme_name == current_sme_name %}
+            <button type="button" class="btn-ghost" data-not-mine data-not-mine-action="/tickets/{{ t.id }}/not-mine" data-not-mine-label="Ticket #{{ t.id }}">Not mine</button>
+            {% elif not is_admin and t.sme_name != current_sme_name and t.status != 'resolved' %}
+            <form method="post" action="/tickets/{{ t.id }}/claim">
+              <button type="submit" class="btn-ghost">Claim mine</button>
             </form>
             {% endif %}
             {% elif is_admin %}
@@ -202,4 +223,8 @@
   </div>
   {% endif %}
 </section>
+{% include "_not_mine_modal.html" %}
+{% endblock %}
+{% block scripts %}
+<script src="/static/board.js"></script>
 {% endblock %}

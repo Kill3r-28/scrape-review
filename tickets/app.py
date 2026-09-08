@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from fastapi import Depends, FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -27,6 +28,7 @@ from tickets.config import (
     PROGRAMME_GRIT,
     PROGRAMME_INTENSIVE_OFFLINE,
     PROGRAMME_NIAT_SKILL,
+    ROLE_SME,
     RULE_TYPE_ASSESSMENT,
     RULE_TYPE_TOPIC,
     SME_NOT_MINE,
@@ -35,10 +37,17 @@ from tickets.config import (
     TICKET_STATUSES,
 )
 from tickets.db import get_db, init_db
-from tickets.ingest import ingest_date, ingest_previous_day, set_ticket_status
-from tickets.models import AssignmentRule, Ticket, WhatsAppDraft
+from tickets.ingest import (
+    ingest_date,
+    ingest_date_range,
+    ingest_previous_day,
+    set_ticket_status,
+)
+from tickets.models import AssignmentRule, NotMineFeedback, Ticket, WhatsAppDraft
 from tickets.routing import reassign_open_tickets
 from tickets.session import clear_session, get_current_user, set_session
+from tickets.agent.assign_learn import apply_not_mine_learnings, record_not_mine_feedback
+from tickets.agent.criticality import assign_criticality_all
 from tickets.agent.draft import draft_whatsapp_for_user, draft_whatsapp_for_users_with_notes
 from tickets.agent.nudge import run_daily_sme_nudges
 from tickets.agent.draft import tickets_with_notes_by_user
@@ -60,10 +69,7 @@ def _login_redirect() -> RedirectResponse:
 
 
 def visible_ticket_query(db: Session, user: User):
-    query = db.query(Ticket)
-    if not is_admin(user):
-        query = query.filter(Ticket.sme_name == user.display_name)
-    return query
+    return db.query(Ticket)
 
 
 def apply_common_filters(
@@ -78,7 +84,7 @@ def apply_common_filters(
 ):
     if programme:
         query = query.filter(Ticket.programme == programme)
-    if sme and is_admin(user):
+    if sme:
         query = query.filter(Ticket.sme_name == sme)
     start = parse_iso_date(start_date)
     end = parse_iso_date(end_date)
@@ -144,10 +150,35 @@ def calendar_counts_by_date(db: Session, user: User) -> dict[str, dict[str, int]
     return result
 
 
+def can_view_ticket(user: User, ticket: Ticket) -> bool:
+    return user is not None and ticket is not None
+
+
 def can_edit_ticket(user: User, ticket: Ticket) -> bool:
     if is_admin(user):
         return True
+    return user.role == ROLE_SME and ticket.sme_name == user.display_name
+
+
+def can_mark_not_mine(user: User, ticket: Ticket) -> bool:
+    if is_admin(user) or user.role != ROLE_SME:
+        return False
     return ticket.sme_name == user.display_name
+
+
+def can_claim_ticket(user: User, ticket: Ticket) -> bool:
+    if is_admin(user) or user.role != ROLE_SME:
+        return False
+    if ticket.sme_name == user.display_name:
+        return False
+    return ticket.status != STATUS_RESOLVED
+
+
+def safe_return_to(value: str) -> str:
+    cleaned = (value or "").strip()
+    if cleaned.startswith("/") and not cleaned.startswith("//"):
+        return cleaned
+    return ""
 
 
 def filter_query_string(
@@ -208,6 +239,32 @@ def logout():
     response = RedirectResponse("/login", status_code=303)
     clear_session(response)
     return response
+
+
+@app.post("/admin/update-reports")
+def admin_update_reports(request: Request, db: Session = Depends(get_db)):
+    """Admin-only: scrape reports from the 1st of this month through today."""
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return RedirectResponse("/", status_code=303)
+
+    today = date.today()
+    start = date(today.year, today.month, 1)
+
+    try:
+        result = ingest_date_range(db, start, today, enrich=True)
+        crit = assign_criticality_all(db, only_missing=True)
+        msg = (
+            f"Updated {result.get('start_date', start.isoformat())} → "
+            f"{result.get('end_date', today.isoformat())}: "
+            f"created {result.get('created', 0)}, "
+            f"skipped {result.get('skipped', 0)}, "
+            f"criticality {crit.get('updated', 0)}"
+        )
+    except Exception as exc:  # noqa: BLE001 — surface scrape failures to admin
+        msg = f"Update failed: {str(exc)[:160]}"
+
+    return RedirectResponse(f"/?msg={quote_plus(msg)}", status_code=303)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -288,10 +345,12 @@ def ticket_board(
                 "end_date": end_date,
                 "q": q,
             },
-            "sme_names": list(ADMIN_SME_FILTERS) if is_admin(user) else list(ASSIGNABLE_SMES),
+            "sme_names": list(ADMIN_SME_FILTERS),
             "assignable_smes": ASSIGNABLE_SMES,
             "not_mine_label": SME_NOT_MINE,
+            "current_sme_name": user.display_name if user.role == ROLE_SME else "",
             "auto_refresh_seconds": 30 if is_admin(user) else 0,
+            "message": request.query_params.get("msg", ""),
             "statuses": TICKET_STATUSES,
             "grit_subjects": GRIT_SUBJECTS,
             "programme_grit": PROGRAMME_GRIT,
@@ -316,7 +375,7 @@ def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db
         return _login_redirect()
 
     ticket = db.get(Ticket, ticket_id)
-    if not ticket or not can_edit_ticket(user, ticket):
+    if not ticket or not can_view_ticket(user, ticket):
         return RedirectResponse("/", status_code=303)
 
     return templates.TemplateResponse(
@@ -326,6 +385,11 @@ def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db
             "user": user,
             "is_admin": is_admin(user),
             "ticket": ticket,
+            "can_mark_not_mine": can_mark_not_mine(user, ticket),
+            "can_claim": can_claim_ticket(user, ticket),
+            "can_edit": can_edit_ticket(user, ticket),
+            "error": request.query_params.get("err", ""),
+            "return_to": safe_return_to(request.query_params.get("return_to", "")),
             "tag_list": [t.strip() for t in (ticket.question_tags or "").split(",") if t.strip()],
             "statuses": TICKET_STATUSES,
             "assignable_smes": list(ASSIGNABLE_SMES) + ([SME_NOT_MINE] if is_admin(user) else []),
@@ -481,19 +545,44 @@ def whatsapp_save(
 
 
 @app.post("/tickets/{ticket_id}/not-mine")
-def mark_not_mine(ticket_id: int, request: Request, db: Session = Depends(get_db)):
+def mark_not_mine(
+    ticket_id: int,
+    request: Request,
+    reason: str = Form(...),
+    db: Session = Depends(get_db),
+):
     user = get_current_user(request, db)
     if not user:
         return _login_redirect()
     ticket = db.get(Ticket, ticket_id)
-    if not ticket or not can_edit_ticket(user, ticket):
-        return RedirectResponse("/", status_code=303)
+    reason = reason.strip()
+    if not ticket or not can_mark_not_mine(user, ticket):
+        return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+    if len(reason) < 8:
+        return RedirectResponse(
+            f"/tickets/{ticket_id}?err=Please+explain+why+this+ticket+is+not+yours+(min+8+chars)",
+            status_code=303,
+        )
+    record_not_mine_feedback(db, ticket, from_sme=user.display_name, reason=reason)
     ticket.sme_name = SME_NOT_MINE
     if ticket.status == STATUS_RESOLVED:
         ticket.status = STATUS_OPEN
         ticket.resolved_at = None
     db.commit()
     return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+
+
+@app.post("/tickets/{ticket_id}/claim")
+def claim_ticket(ticket_id: int, request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return _login_redirect()
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket or not can_claim_ticket(user, ticket):
+        return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+    ticket.sme_name = user.display_name
+    db.commit()
+    return RedirectResponse(request.headers.get("referer", f"/tickets/{ticket_id}"), status_code=303)
 
 
 @app.get("/assignments", response_class=HTMLResponse)
@@ -510,6 +599,20 @@ def assignments_page(request: Request, db: Session = Depends(get_db)):
         .order_by(Ticket.id.desc())
         .limit(200)
         .all()
+    )
+    feedback_by_ticket: dict[int, NotMineFeedback] = {}
+    if not_mine:
+        ticket_ids = [t.id for t in not_mine]
+        for fb in (
+            db.query(NotMineFeedback)
+            .filter(NotMineFeedback.ticket_id.in_(ticket_ids))
+            .order_by(NotMineFeedback.id.desc())
+            .all()
+        ):
+            if fb.ticket_id not in feedback_by_ticket:
+                feedback_by_ticket[fb.ticket_id] = fb
+    pending_feedback = (
+        db.query(NotMineFeedback).filter(NotMineFeedback.applied.is_(False)).count()
     )
     topic_rules = (
         db.query(AssignmentRule)
@@ -530,6 +633,8 @@ def assignments_page(request: Request, db: Session = Depends(get_db)):
             "user": user,
             "is_admin": True,
             "not_mine": not_mine,
+            "feedback_by_ticket": feedback_by_ticket,
+            "pending_feedback": pending_feedback,
             "topic_rules": topic_rules,
             "title_rules": title_rules,
             "assignable_smes": ASSIGNABLE_SMES,
@@ -613,6 +718,20 @@ def reapply_assignments(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@app.post("/assignments/apply-learnings")
+def apply_learnings(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return RedirectResponse("/", status_code=303)
+    result = apply_not_mine_learnings(db)
+    return RedirectResponse(
+        "/assignments?msg="
+        f"Applied+{result['feedback_applied']}+feedback+"
+        f"(+{result['rules_added']}+rules,+{result['not_mine_cleared']}+Not+mine+cleared)",
+        status_code=303,
+    )
+
+
 @app.get("/health")
 def health():
     return {"ok": True}
@@ -654,7 +773,14 @@ def api_ingest_date(
 
 def _require_ingest_token(request: Request) -> None:
     expected = os.getenv("INGEST_TOKEN", "").strip()
+    hosted = bool(os.getenv("RAILWAY_ENVIRONMENT", "").strip()) or os.getenv(
+        "RENDER", ""
+    ).strip().lower() == "true"
     if not expected:
+        if hosted:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=503, detail="INGEST_TOKEN not configured")
         return
     provided = request.headers.get("X-Ingest-Token", "")
     if provided != expected:

@@ -88,4 +88,18 @@ SMTP_FROM=
 | varsha | Varsha@Grit2026! | SME |
 | saifullah | Saifullah@Grit2026! | SME |
 
-Deploy notes: see `DEPLOY_RENDER.md` when you are ready to host.
+Deploy notes: [`RAILWAY.md`](RAILWAY.md) (recommended — GitHub auto-deploy) or [`DEPLOY_RENDER.md`](DEPLOY_RENDER.md).
+
+## Fixed public URL (Tailscale Funnel — free)
+
+Permanent SME link with offline page when app is down. See [`TAILSCALE.md`](TAILSCALE.md).
+
+```bash
+brew install --cask tailscale-app          # once — open app and sign in
+./scripts/start-public.sh       # gatekeeper + funnel (fixed URL)
+./scripts/show-public-url.sh    # copy link for SMEs
+./scripts/live-app.sh           # start ticket app when SMEs should work
+./scripts/stop-app.sh           # offline page on same URL
+```
+
+Cloudflare custom domain option: [`CLOUDFLARE_TUNNEL.md`](CLOUDFLARE_TUNNEL.md).

@@ -20,6 +20,7 @@
           <th>Description</th>
           <th>Assessment</th>
           <th>Tags</th>
+          <th>Why not theirs</th>
           <th>Assign to</th>
         </tr>
       </thead>
@@ -31,6 +32,15 @@
           <td class="desc">{{ t.student_description }}</td>
           <td>{{ t.org_assessment_title or "—" }}</td>
           <td class="muted small">{{ t.question_tags or "—" }}</td>
+          <td class="desc small">
+            {% set fb = feedback_by_ticket.get(t.id) %}
+            {% if fb %}
+            <strong>{{ fb.from_sme }}:</strong> {{ fb.reason }}
+            {% if fb.inferred_sme %}<div class="muted">Inferred → {{ fb.inferred_sme }}</div>{% endif %}
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
           <td>
             <form method="post" action="/tickets/{{ t.id }}/assign" class="inline-assign">
               <select name="sme_name" onchange="this.form.submit()">
@@ -132,6 +142,10 @@
   </div>
 </section>
 
+<form method="post" action="/assignments/apply-learnings" class="filters" style="margin-bottom:0.75rem;">
+  <button type="submit">Apply Not mine learnings{% if pending_feedback %} ({{ pending_feedback }} pending){% endif %}</button>
+  <span class="muted small">Turns SME feedback into assignment rules and re-routes tickets. Also runs automatically on live-up.</span>
+</form>
 <form method="post" action="/assignments/reapply" class="filters">
   <button type="submit">Re-apply rules to all tickets (keeps Not mine)</button>
 </form>

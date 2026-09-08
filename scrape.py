@@ -96,6 +96,8 @@ def parse_creation_datetime(value: str) -> datetime | None:
     cleaned = cleaned.replace("a.m.", "AM").replace("p.m.", "PM")
     cleaned = cleaned.replace("a.m", "AM").replace("p.m", "PM")
     cleaned = cleaned.replace("A.M.", "AM").replace("P.M.", "PM")
+    # Django admin sometimes uses "Sept." instead of "Sep."
+    cleaned = re.sub(r"\bSept\.", "Sep", cleaned)
     # Django admin often renders abbreviated months with a trailing dot: "Aug. 20, 2026"
     cleaned = re.sub(
         r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.",
@@ -503,15 +505,14 @@ def scrape_reports_for_date_range(
 
     all_matches: list[dict[str, str]] = []
 
-    def collect(rows: list[dict[str, str]]) -> date | None:
+    def collect(rows: list[dict[str, str]]) -> tuple[date | None, date | None]:
         for row in rows:
             parsed = parse_creation_datetime(row.get("Creation datetime", ""))
             if parsed and start_date <= parsed.date() <= end_date:
                 all_matches.append(row)
-        _, max_date = get_page_date_range(rows)
-        return max_date
+        return get_page_date_range(rows)
 
-    max_date = collect(extract_rows_from_container(first_container))
+    min_date, max_date = collect(extract_rows_from_container(first_container))
     print(f"Page 1: matched so far {len(all_matches)}")
 
     for page_number in range(2, total_pages + 1):
@@ -521,9 +522,9 @@ def scrape_reports_for_date_range(
         if not rows:
             break
 
-        max_date = collect(rows)
+        min_date, max_date = collect(rows)
         print(f"Page {page_number}: matched so far {len(all_matches)}")
-        if max_date is not None and max_date < start_date:
+        if min_date is not None and min_date < start_date:
             break
 
     return all_matches

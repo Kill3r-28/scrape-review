@@ -1,0 +1,10 @@
+# Copy to config.yml and replace hostname + credentials-file path.
+# Credentials JSON comes from: cloudflared tunnel create sme-tickets
+
+tunnel: sme-tickets
+credentials-file: .cloudflared/TUNNEL_ID.json
+
+ingress:
+  - hostname: sme-tickets.YOUR_DOMAIN.com
+    service: http://127.0.0.1:8000
+  - service: http_status:404

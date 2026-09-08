@@ -1,0 +1,13 @@
+.venv/
+.git/
+.pytest_cache/
+.run/
+output/
+*.db
+learning_points.txt
+.env
+.cloudflared/
+cloudflared/config.yml
+__pycache__/
+*.pyc
+.DS_Store

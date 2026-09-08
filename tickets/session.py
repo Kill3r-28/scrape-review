@@ -49,9 +49,11 @@ def parse_session_token(token: str) -> int | None:
 
 
 def set_session(response: Response, user_id: int) -> None:
-    # Render sets RENDER=true; force Secure cookies on HTTPS hosts.
     secure_flag = os.getenv("SESSION_SECURE", "").strip().lower() in {"1", "true", "yes"}
-    secure = secure_flag or os.getenv("RENDER", "").strip().lower() == "true"
+    hosted = os.getenv("RENDER", "").strip().lower() == "true" or bool(
+        os.getenv("RAILWAY_ENVIRONMENT", "").strip()
+    )
+    secure = secure_flag or hosted
     response.set_cookie(
         SESSION_COOKIE,
         create_session_token(user_id),

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>topin.tech · Offline</title>
+  <link rel="icon" href="/static/topin-icon.svg" type="image/svg+xml" />
+  <style>
+    :root {
+      --ink: #2a1538;
+      --muted: #6f5f7f;
+      --gradient: linear-gradient(90deg, #fe9a4e 0%, #e35bb0 52%, #c23bda 100%);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 1.5rem;
+      font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse 80% 50% at 10% -10%, rgba(254, 154, 78, 0.12), transparent 55%),
+        radial-gradient(ellipse 70% 45% at 90% 0%, rgba(194, 59, 218, 0.1), transparent 50%),
+        linear-gradient(180deg, #fff 0%, #faf7fc 100%);
+    }
+    .card {
+      max-width: 480px;
+      width: 100%;
+      background: #fff;
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 12px 32px rgba(42, 21, 56, 0.08);
+      position: relative;
+      text-align: center;
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 1px;
+      background: var(--gradient);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      pointer-events: none;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      margin-bottom: 1.25rem;
+      font-size: 1.35rem;
+      font-weight: 700;
+    }
+    .dottech {
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    h1 { margin: 0 0 0.75rem; font-size: 1.5rem; }
+    p { margin: 0 0 1rem; line-height: 1.55; color: var(--muted); }
+    .status {
+      display: inline-block;
+      padding: 0.35rem 0.85rem;
+      border-radius: 999px;
+      background: #eef0f3;
+      color: #5c6570;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 1.25rem;
+    }
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 0.65rem 1.25rem;
+      font: inherit;
+      font-weight: 600;
+      color: #fff;
+      background: var(--gradient);
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand">
+      <img src="/static/topin-icon.svg" alt="" width="32" height="32" />
+      <span>topin<span class="dottech">.tech</span></span>
+    </div>
+    <span class="status">Not live right now</span>
+    <h1>Ticket board is offline</h1>
+    <p>The SME ticket app is not running at the moment. Please ask the admin to start the app, then refresh this page.</p>
+    <button type="button" onclick="location.reload()">Refresh</button>
+  </main>
+</body>
+</html>

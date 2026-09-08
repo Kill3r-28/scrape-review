@@ -12,27 +12,45 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
-      <a href="/" class="brand-link">
-        <img src="/static/topin-icon.svg" alt="" class="topin-icon" width="28" height="28" />
-        <span class="brand-wordmark">topin<span class="brand-dottech">.tech</span></span>
-      </a>
+    <div class="topbar-left">
+      {% block header_back %}{% endblock %}
+      <div class="brand">
+        <a href="/" class="brand-link">
+          <img src="/static/topin-icon.svg" alt="" class="topin-icon" width="28" height="28" />
+          <span class="brand-wordmark">topin<span class="brand-dottech">.tech</span></span>
+        </a>
+      </div>
     </div>
     <div class="topbar-right">
       {% if user %}
       <a href="/">Tickets</a>
-      <a href="/whatsapp">WhatsApp</a>
-      {% if is_admin %}<a href="/assignments">Assignments</a>{% endif %}
+      {% if is_admin %}
+      <form method="post" action="/admin/update-reports" class="inline" id="admin-update-form">
+        <button type="submit" class="btn-ghost" id="admin-update-btn" title="Scrape and import reports for this month through today">Update</button>
+      </form>
+      <a href="/assignments">Assignments</a>
+      {% endif %}
       <span class="muted">{{ user.display_name }} · {{ user.role }}</span>
       <form method="post" action="/logout" class="inline">
         <button type="submit" class="btn-ghost">Log out</button>
       </form>
       {% endif %}
-      {% block header_actions %}{% endblock %}
     </div>
   </header>
   <main class="container">
     {% block content %}{% endblock %}
   </main>
+  {% block scripts %}{% endblock %}
+  <script>
+    (function () {
+      var form = document.getElementById("admin-update-form");
+      var btn = document.getElementById("admin-update-btn");
+      if (!form || !btn) return;
+      form.addEventListener("submit", function () {
+        btn.disabled = true;
+        btn.textContent = "Updating…";
+      });
+    })();
+  </script>
 </body>
 </html>

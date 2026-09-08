@@ -99,6 +99,25 @@ class NudgeLog(Base):
     )
 
 
+class NotMineFeedback(Base):
+    """SME feedback when marking a ticket Not mine — used to improve assignment rules."""
+
+    __tablename__ = "not_mine_feedback"
+    __table_args__ = (Index("ix_not_mine_feedback_applied", "applied"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    ticket_id: Mapped[int] = mapped_column(nullable=False)
+    from_sme: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    org_assessment_title: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    question_tags: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    inferred_sme: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    applied: Mapped[bool] = mapped_column(nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class AssignmentRule(Base):
     """Admin-editable topic / assessment-title → SME mapping."""
 

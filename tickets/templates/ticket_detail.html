@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Ticket #{{ ticket.id }}{% endblock %}
-{% block header_actions %}
-<a class="back" href="/">← All tickets</a>
+{% block header_back %}
+<button type="button" class="nav-back" data-nav-back {% if return_to %}data-nav-back-fallback="{{ return_to }}"{% endif %} aria-label="Go back to previous page">← All tickets</button>
 {% endblock %}
 {% block content %}
+{% if error %}
+<p class="stat active" style="display:inline-block;margin-bottom:1rem;">{{ error }}</p>
+{% endif %}
 <article class="detail">
   <header class="detail-head">
     <div>
@@ -61,6 +64,7 @@
     {% endif %}
   </section>
 
+  {% if can_edit %}
   <form class="card form-grid" method="post" action="/tickets/{{ ticket.id }}/update">
     <h2>Resolution</h2>
     <label>
@@ -91,12 +95,24 @@
       <button type="submit">Save</button>
     </div>
   </form>
+  {% elif not is_admin %}
+  <section class="card">
+    <h2>Resolution</h2>
+    <p class="muted">Assigned to <strong>{{ ticket.sme_name }}</strong>. You can view this ticket but only the assigned SME can update it.</p>
+  </section>
+  {% endif %}
 
-  {% if not is_admin %}
-  <form class="card" method="post" action="/tickets/{{ ticket.id }}/not-mine">
+  {% if can_mark_not_mine %}
+  <section class="card">
     <h2>Wrong queue?</h2>
-    <button type="submit" class="btn-ghost">Mark as Not mine</button>
-    <p class="muted small">Sends this ticket to the admin Not mine queue for reassignment.</p>
+    <button type="button" class="btn-ghost" data-not-mine data-not-mine-action="/tickets/{{ ticket.id }}/not-mine" data-not-mine-label="Ticket #{{ ticket.id }}">Mark as Not mine</button>
+    <p class="muted small">Opens a dialog — your reason is saved to learning_points.txt for assignment improvements.</p>
+  </section>
+  {% elif can_claim %}
+  <form class="card" method="post" action="/tickets/{{ ticket.id }}/claim">
+    <h2>Take this ticket?</h2>
+    <p class="muted">Currently assigned to <strong>{{ ticket.sme_name }}</strong>.</p>
+    <button type="submit">Claim mine</button>
   </form>
   {% endif %}
 
@@ -110,4 +126,9 @@
     </dl>
   </section>
 </article>
+{% include "_not_mine_modal.html" %}
+{% endblock %}
+{% block scripts %}
+<script src="/static/board.js"></script>
+<script src="/static/nav.js"></script>
 {% endblock %}
