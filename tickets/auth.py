@@ -9,7 +9,14 @@ from datetime import datetime
 from sqlalchemy import DateTime, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, Session
 
-from tickets.config import ROLE_ADMIN, ROLE_SME, SEED_USERS
+from tickets.config import (
+    ASSIGNABLE_SMES,
+    ROLE_ADMIN,
+    ROLE_SME,
+    SEED_USERS,
+    SME_NOT_MINE,
+    SME_UNASSIGNED,
+)
 from tickets.db import Base
 
 
@@ -25,6 +32,74 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+def list_assignable_smes(db: Session) -> list[str]:
+    """Seed roster + any SME users created in the app (for dropdowns)."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for name in ASSIGNABLE_SMES:
+        if name not in seen:
+            names.append(name)
+            seen.add(name)
+    for user in (
+        db.query(User)
+        .filter(User.role == ROLE_SME)
+        .order_by(User.display_name.asc())
+        .all()
+    ):
+        display = (user.display_name or "").strip()
+        if display and display not in seen:
+            names.append(display)
+            seen.add(display)
+    return names
+
+
+def list_admin_sme_filters(db: Session) -> list[str]:
+    names = list_assignable_smes(db)
+    if SME_NOT_MINE not in names:
+        names = names + [SME_NOT_MINE]
+    return names
+
+
+def username_from_display_name(display_name: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "" for ch in display_name.strip())
+    return (cleaned[:32] or "sme").lower()
+
+
+def create_sme_user(
+    db: Session,
+    *,
+    display_name: str,
+    username: str = "",
+    password: str = "",
+) -> tuple[User | None, str]:
+    """Create an SME login. Returns (user, error_message)."""
+    display = display_name.strip()
+    if len(display) < 2:
+        return None, "Name must be at least 2 characters"
+    if display in (SME_UNASSIGNED, SME_NOT_MINE, "Admin"):
+        return None, "That name is reserved"
+
+    uname = (username.strip().lower() or username_from_display_name(display))[:64]
+    if len(uname) < 2:
+        return None, "Username must be at least 2 characters"
+    if db.query(User).filter(User.username == uname).one_or_none():
+        return None, f"Username '{uname}' already exists"
+    if db.query(User).filter(User.display_name == display, User.role == ROLE_SME).one_or_none():
+        return None, f"SME '{display}' already exists"
+
+    pwd = password.strip() or f"{display.split()[0].capitalize()}@Grit2026!"
+    user = User(
+        username=uname,
+        display_name=display,
+        role=ROLE_SME,
+        password_hash=hash_password(pwd),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user, ""
 
 
 def _pbkdf2(password: str, salt: str) -> str:

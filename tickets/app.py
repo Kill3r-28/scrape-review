@@ -15,7 +15,14 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from tickets.auth import User, authenticate, is_admin
+from tickets.auth import (
+    User,
+    authenticate,
+    create_sme_user,
+    is_admin,
+    list_admin_sme_filters,
+    list_assignable_smes,
+)
 from tickets.calendar_view import (
     build_calendar_days,
     month_title,
@@ -368,8 +375,8 @@ def ticket_board(
                 "end_date": end_date,
                 "q": q,
             },
-            "sme_names": list(ADMIN_SME_FILTERS),
-            "assignable_smes": ASSIGNABLE_SMES,
+            "sme_names": list_admin_sme_filters(db),
+            "assignable_smes": list_assignable_smes(db),
             "not_mine_label": SME_NOT_MINE,
             "current_sme_name": user.display_name if user.role == ROLE_SME else "",
             "auto_refresh_seconds": 30 if is_admin(user) else 0,
@@ -415,7 +422,8 @@ def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db
             "return_to": safe_return_to(request.query_params.get("return_to", "")),
             "tag_list": [t.strip() for t in (ticket.question_tags or "").split(",") if t.strip()],
             "statuses": TICKET_STATUSES,
-            "assignable_smes": list(ASSIGNABLE_SMES) + ([SME_NOT_MINE] if is_admin(user) else []),
+            "assignable_smes": list_assignable_smes(db)
+            + ([SME_NOT_MINE] if is_admin(user) else []),
             "auto_refresh_seconds": 0,
         },
     )
@@ -441,7 +449,7 @@ def update_ticket(
     ticket.notes = notes.strip()
     if is_admin(user):
         cleaned = sme_name.strip() or "Unassigned"
-        if cleaned in ASSIGNABLE_SMES:
+        if cleaned in list_assignable_smes(db) or cleaned == SME_NOT_MINE:
             ticket.sme_name = cleaned
         new_status = status if status in TICKET_STATUSES else STATUS_OPEN
     else:
@@ -490,7 +498,7 @@ def assign_ticket(
         return RedirectResponse("/", status_code=303)
 
     ticket = db.get(Ticket, ticket_id)
-    if ticket and sme_name.strip() in ASSIGNABLE_SMES:
+    if ticket and sme_name.strip() in list_assignable_smes(db):
         ticket.sme_name = sme_name.strip()
         db.commit()
     return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
@@ -660,7 +668,14 @@ def assignments_page(request: Request, db: Session = Depends(get_db)):
             "pending_feedback": pending_feedback,
             "topic_rules": topic_rules,
             "title_rules": title_rules,
-            "assignable_smes": ASSIGNABLE_SMES,
+            "assignable_smes": list_assignable_smes(db),
+            "sme_people": [
+                u
+                for u in db.query(User)
+                .filter(User.role == ROLE_SME)
+                .order_by(User.display_name.asc())
+                .all()
+            ],
             "rule_type_topic": RULE_TYPE_TOPIC,
             "rule_type_assessment": RULE_TYPE_ASSESSMENT,
             "message": request.query_params.get("msg", ""),
@@ -683,7 +698,7 @@ def add_assignment_rule(
         return RedirectResponse("/", status_code=303)
     if rule_type not in (RULE_TYPE_TOPIC, RULE_TYPE_ASSESSMENT):
         return RedirectResponse("/assignments", status_code=303)
-    if sme_name not in ASSIGNABLE_SMES:
+    if sme_name not in list_assignable_smes(db):
         return RedirectResponse("/assignments", status_code=303)
     marker = marker.strip()
     if not marker:
@@ -699,6 +714,32 @@ def add_assignment_rule(
     )
     db.commit()
     return RedirectResponse("/assignments?msg=Rule+added", status_code=303)
+
+
+@app.post("/assignments/people/add")
+def add_assignment_person(
+    request: Request,
+    display_name: str = Form(...),
+    username: str = Form(""),
+    password: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    user = get_current_user(request, db)
+    if not user or not is_admin(user):
+        return RedirectResponse("/", status_code=303)
+    created, err = create_sme_user(
+        db,
+        display_name=display_name,
+        username=username,
+        password=password,
+    )
+    if err:
+        return RedirectResponse(f"/assignments?msg={quote_plus(err)}", status_code=303)
+    msg = (
+        f"Added {created.display_name} "
+        f"(login: {created.username}). They appear in SME dropdowns now."
+    )
+    return RedirectResponse(f"/assignments?msg={quote_plus(msg)}", status_code=303)
 
 
 @app.post("/assignments/rules/{rule_id}/delete")

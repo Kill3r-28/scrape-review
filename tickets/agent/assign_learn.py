@@ -7,6 +7,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from tickets.auth import list_assignable_smes
 from tickets.config import (
     ASSIGNABLE_SMES,
     RULE_TYPE_ASSESSMENT,
@@ -36,9 +37,10 @@ def append_learning_point(ticket: Ticket, *, from_sme: str, reason: str) -> None
 
 
 
-def _sme_name_tokens() -> dict[str, str]:
+def _sme_name_tokens(db: Session | None = None) -> dict[str, str]:
     tokens: dict[str, str] = {}
-    for name in ASSIGNABLE_SMES:
+    names = list_assignable_smes(db) if db is not None else list(ASSIGNABLE_SMES)
+    for name in names:
         if name in (SME_UNASSIGNED, SME_NOT_MINE):
             continue
         first = name.split()[0].upper()
@@ -51,12 +53,13 @@ def infer_sme_from_reason(
     reason: str,
     question_tags: str = "",
     org_assessment_title: str = "",
+    db: Session | None = None,
 ) -> str | None:
     """Best-effort SME guess from free-text reason + ticket context."""
     reason_upper = (reason or "").upper()
     context_upper = f"{question_tags} {org_assessment_title}".upper()
 
-    for token, sme_name in _sme_name_tokens().items():
+    for token, sme_name in _sme_name_tokens(db).items():
         if token in reason_upper:
             return sme_name
 
@@ -90,11 +93,14 @@ def infer_sme_from_reason(
     return None
 
 
-def suggest_rule_from_feedback(feedback: NotMineFeedback) -> tuple[str, str, str] | None:
+def suggest_rule_from_feedback(
+    feedback: NotMineFeedback, db: Session | None = None
+) -> tuple[str, str, str] | None:
     inferred = infer_sme_from_reason(
         feedback.reason,
         feedback.question_tags,
         feedback.org_assessment_title,
+        db=db,
     )
     if not inferred:
         return None
@@ -114,7 +120,7 @@ def suggest_rule_from_feedback(feedback: NotMineFeedback) -> tuple[str, str, str
 
 def _upsert_rule(db: Session, rule_type: str, marker: str, sme_name: str) -> bool:
     marker = marker.strip()
-    if not marker or sme_name not in ASSIGNABLE_SMES:
+    if not marker or sme_name not in list_assignable_smes(db):
         return False
     existing = (
         db.query(AssignmentRule)
@@ -154,9 +160,9 @@ def apply_not_mine_learnings(db: Session) -> dict[str, int]:
     rules_added = 0
     feedback_applied = 0
     for row in pending:
-        suggestion = suggest_rule_from_feedback(row)
+        suggestion = suggest_rule_from_feedback(row, db=db)
         inferred = infer_sme_from_reason(
-            row.reason, row.question_tags, row.org_assessment_title
+            row.reason, row.question_tags, row.org_assessment_title, db=db
         )
         if suggestion:
             rule_type, marker, sme_name = suggestion
