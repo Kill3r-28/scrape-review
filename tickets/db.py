@@ -17,6 +17,9 @@ def database_url() -> str:
     # Railway sometimes provides postgres:// — SQLAlchemy wants postgresql://
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
+    # Prefer psycopg v3 driver (installed as psycopg[binary], not psycopg2).
+    if url.startswith("postgresql://") and "+psycopg" not in url.split("://", 1)[0]:
+        url = "postgresql+psycopg://" + url[len("postgresql://") :]
     return url
 
 
