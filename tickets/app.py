@@ -50,6 +50,7 @@ from tickets.ingest import (
     ingest_date,
     ingest_date_range,
     ingest_previous_day,
+    ensure_all_question_ids,
     set_ticket_status,
 )
 from tickets.models import AssignmentRule, NotMineFeedback, Ticket, WhatsAppDraft
@@ -1071,6 +1072,17 @@ def api_ingest_previous_day(
 ):
     _require_ingest_token(request)
     return ingest_previous_day(db, enrich=enrich)
+
+
+@app.post("/api/ingest/repair-question-ids")
+def api_repair_question_ids(
+    request: Request,
+    enrich: bool = Query(True),
+    db: Session = Depends(get_db),
+):
+    """Backfill question_id (and type/text/tags) for every ticket missing it."""
+    _require_ingest_token(request)
+    return ensure_all_question_ids(db, enrich=enrich)
 
 
 @app.post("/api/ingest/{report_date}")

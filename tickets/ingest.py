@@ -18,6 +18,7 @@ from scrape import (
     scrape_reports_for_date,
     scrape_reports_for_date_range,
 )
+from tickets.calendar_view import parse_iso_date
 from tickets.config import STATUS_OPEN, STATUS_RESOLVED
 from tickets.models import Ticket
 from tickets.routing import route_ticket
@@ -87,6 +88,7 @@ def upsert_tickets(
     report_date: date | None = None,
 ) -> dict[str, int]:
     created = 0
+    updated = 0
     skipped = 0
     seen: set[str] = set()
     for row in rows:
@@ -103,14 +105,62 @@ def upsert_tickets(
             .one_or_none()
         )
         if existing:
-            skipped += 1
+            if _fill_missing_question_fields(existing, fields, db):
+                updated += 1
+            else:
+                skipped += 1
             continue
         db.add(Ticket(**fields))
         created += 1
         if created % 100 == 0:
             db.flush()
     db.commit()
-    return {"created": created, "skipped": skipped, "total_rows": len(rows)}
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "total_rows": len(rows),
+    }
+
+
+def _fill_missing_question_fields(
+    ticket: Ticket, fields: dict, db: Session | None = None
+) -> bool:
+    """
+    Fill empty question_id / type / text / tags (and title) from scraped fields.
+    Re-routes SME when tags land. Returns True if anything changed.
+    """
+    changed = False
+    qid = (fields.get("question_id") or "").strip()
+    if qid and not (ticket.question_id or "").strip():
+        ticket.question_id = qid
+        changed = True
+
+    for key in ("question_type", "question_text", "question_tags"):
+        new_val = (fields.get(key) or "").strip()
+        if new_val and not (getattr(ticket, key) or "").strip():
+            setattr(ticket, key, new_val)
+            changed = True
+
+    title = (fields.get("org_assessment_title") or "").strip()
+    if title and not (ticket.org_assessment_title or "").strip():
+        ticket.org_assessment_title = title
+        changed = True
+
+    org_id = (fields.get("org_assessment_id") or "").strip()
+    if org_id and not (ticket.org_assessment_id or "").strip():
+        ticket.org_assessment_id = org_id
+        changed = True
+
+    if changed:
+        routed = route_ticket(ticket.org_assessment_title, ticket.question_tags, db)
+        if ticket.programme != routed["programme"]:
+            ticket.programme = routed["programme"]
+        if ticket.subject != routed["subject"]:
+            ticket.subject = routed["subject"]
+        if (ticket.sme_name or "Unassigned") == "Unassigned":
+            ticket.sme_name = routed["sme_name"]
+    return changed
 
 
 def apply_sme_routing(db: Session) -> int:
@@ -260,18 +310,79 @@ def repair_missing_question_data(
 ) -> dict[str, int]:
     """
     Re-scrape reports and fill question_id / type / text / tags on tickets that
-    were ingested before exam_details.questions_id was parsed.
+    are missing them when the source report includes exam_details.questions_id.
     """
     load_dotenv(ENV_PATH)
     rows = scrape_reports_for_date_range(start_date, end_date)
-    by_external = {build_external_report_id(row): row for row in rows}
+    return _apply_scraped_rows_to_missing_question_tickets(db, rows, enrich=enrich)
 
-    missing = db.query(Ticket).filter(Ticket.question_id == "").all()
+
+def ensure_all_question_ids(db: Session, *, enrich: bool = True) -> dict[str, int]:
+    """
+    For every ticket with an empty question_id, re-scrape that ticket's report_date
+    and fill question_id (plus type/text/tags) whenever the source has it.
+    """
+    load_dotenv(ENV_PATH)
+    missing = (
+        db.query(Ticket)
+        .filter((Ticket.question_id == None) | (Ticket.question_id == ""))  # noqa: E711
+        .order_by(Ticket.report_date.asc(), Ticket.id.asc())
+        .all()
+    )
+    missing_before = len(missing)
+    if not missing_before:
+        return {
+            "missing_before": 0,
+            "dates_scraped": 0,
+            "scraped_rows": 0,
+            "question_ids_linked": 0,
+            "still_missing": 0,
+            "source_had_no_question_id": 0,
+            "enriched": 0,
+            "enrich_skipped": 0,
+        }
+
+    dates = sorted(
+        {
+            d
+            for t in missing
+            if (d := parse_iso_date(t.report_date or "")) is not None
+        }
+    )
+    all_rows: list[dict[str, str]] = []
+    for index, day in enumerate(dates, start=1):
+        print(f"Repair scrape {index}/{len(dates)}: {day.isoformat()}", flush=True)
+        all_rows.extend(scrape_reports_for_date(day))
+
+    result = _apply_scraped_rows_to_missing_question_tickets(
+        db, all_rows, enrich=enrich
+    )
+    still = (
+        db.query(Ticket)
+        .filter((Ticket.question_id == None) | (Ticket.question_id == ""))  # noqa: E711
+        .count()
+    )
+    result["missing_before"] = missing_before
+    result["dates_scraped"] = len(dates)
+    result["still_missing"] = still
+    result["source_had_no_question_id"] = max(0, missing_before - result["question_ids_linked"])
+    return result
+
+
+def _apply_scraped_rows_to_missing_question_tickets(
+    db: Session,
+    rows: list[dict[str, str]],
+    *,
+    enrich: bool,
+) -> dict[str, int]:
+    by_external = {build_external_report_id(row): row for row in rows}
+    missing = db.query(Ticket).filter(
+        (Ticket.question_id == None) | (Ticket.question_id == "")  # noqa: E711
+    ).all()
     linked = 0
     for ticket in missing:
         row = by_external.get(ticket.external_report_id)
         if not row:
-            # Fallback match on user + creation + description.
             for candidate in rows:
                 if (
                     candidate.get("User id", "").strip() == ticket.user_id
@@ -284,15 +395,13 @@ def repair_missing_question_data(
                     break
         if not row:
             continue
-        qid = row.get("Question id", "").strip()
-        if not qid:
+        fields = row_to_ticket_fields(
+            row, report_date_for_row(row, parse_iso_date(ticket.report_date or "")), db
+        )
+        if not (fields.get("question_id") or "").strip():
             continue
-        ticket.question_id = qid
-        if not ticket.org_assessment_title:
-            ticket.org_assessment_title = row.get("Org assessment title", "").strip()
-        if not ticket.org_assessment_id:
-            ticket.org_assessment_id = row.get("Org assessment id", "").strip()
-        linked += 1
+        if _fill_missing_question_fields(ticket, fields, db):
+            linked += 1
     db.commit()
 
     enrich_result = {"updated": 0, "skipped": 0, "total": 0}

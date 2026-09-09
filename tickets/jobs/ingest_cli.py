@@ -10,6 +10,7 @@ from tickets.db import SessionLocal, init_db
 from tickets.ingest import (
     apply_sme_routing,
     enrich_existing_tickets,
+    ensure_all_question_ids,
     ingest_date,
     ingest_date_range,
     ingest_previous_day,
@@ -45,8 +46,9 @@ def main() -> int:
     parser.add_argument(
         "--repair-questions",
         action="store_true",
-        help="Re-scrape and fill missing question_id/type/text/tags "
-        "(uses --from-date/--to-date)",
+        help="Re-scrape and fill missing question_id/type/text/tags. "
+        "With --from-date/--to-date limits the scrape window; without dates "
+        "repairs every ticket missing a question_id.",
     )
     args = parser.parse_args()
 
@@ -65,17 +67,24 @@ def main() -> int:
             return 0
 
         if args.repair_questions:
-            if not args.from_date or not args.to_date:
-                parser.error("--repair-questions requires --from-date and --to-date")
-                return 2
-            start = date.fromisoformat(args.from_date)
-            end = date.fromisoformat(args.to_date)
-            result = repair_missing_question_data(db, start, end, enrich=enrich)
-            print(
-                f"Repair complete: scraped={result['scraped_rows']} "
-                f"linked={result['question_ids_linked']} "
-                f"enriched={result['enriched']}"
-            )
+            if args.from_date and args.to_date:
+                start = date.fromisoformat(args.from_date)
+                end = date.fromisoformat(args.to_date)
+                result = repair_missing_question_data(db, start, end, enrich=enrich)
+                print(
+                    f"Repair complete: scraped={result['scraped_rows']} "
+                    f"linked={result['question_ids_linked']} "
+                    f"enriched={result['enriched']}"
+                )
+            else:
+                result = ensure_all_question_ids(db, enrich=enrich)
+                print(
+                    f"Repair-all complete: missing_before={result['missing_before']} "
+                    f"dates={result['dates_scraped']} linked={result['question_ids_linked']} "
+                    f"still_missing={result['still_missing']} "
+                    f"source_no_qid={result['source_had_no_question_id']} "
+                    f"enriched={result['enriched']}"
+                )
             return 0
 
         if args.enrich_tickets:

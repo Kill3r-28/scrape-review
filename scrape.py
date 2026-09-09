@@ -231,9 +231,16 @@ def extract_question_id_from_metadata(data: dict) -> str:
     exam_details = data.get("exam_details") or {}
     if isinstance(exam_details, dict):
         for key in ("questions_id", "question_id", "questionId"):
-            value = str(exam_details.get(key, "") or "").strip()
-            if value:
-                return value
+            raw = exam_details.get(key, "")
+            if isinstance(raw, list):
+                for item in raw:
+                    value = str(item or "").strip()
+                    if value:
+                        return value
+            else:
+                value = str(raw or "").strip()
+                if value:
+                    return value
     return ""
 
 
@@ -494,6 +501,7 @@ def scrape_reports_for_date_range(
     if end_date < start_date:
         raise ValueError("end_date must be >= start_date")
 
+    load_dotenv(ENV_PATH)
     session = create_session()
     login_with_django_admin(session)
 
