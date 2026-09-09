@@ -365,7 +365,10 @@ def ensure_all_question_ids(db: Session, *, enrich: bool = True) -> dict[str, in
     result["missing_before"] = missing_before
     result["dates_scraped"] = len(dates)
     result["still_missing"] = still
-    result["source_had_no_question_id"] = max(0, missing_before - result["question_ids_linked"])
+    result["source_had_no_question_id"] = int(result.get("matched_but_source_no_qid", 0))
+    result["unmatched_missing"] = max(
+        0, missing_before - int(result.get("matched_missing_tickets", 0))
+    )
     return result
 
 
@@ -376,29 +379,51 @@ def _apply_scraped_rows_to_missing_question_tickets(
     enrich: bool,
 ) -> dict[str, int]:
     by_external = {build_external_report_id(row): row for row in rows}
+    by_user_created_desc: dict[tuple[str, str, str], dict[str, str]] = {}
+    by_user_org_created: dict[tuple[str, str, str], dict[str, str]] = {}
+    by_user_desc_day: dict[tuple[str, str, str], dict[str, str]] = {}
+    for row in rows:
+        user = row.get("User id", "").strip()
+        desc = row.get("Description", "").strip()
+        created = row.get("Creation datetime", "").strip()
+        org = row.get("Org assessment id", "").strip()
+        parsed = parse_creation_datetime(created)
+        day = parsed.date().isoformat() if parsed else ""
+        if user and created:
+            by_user_created_desc[(user, created, desc)] = row
+        if user and org and created:
+            by_user_org_created[(user, org, created)] = row
+        if user and day:
+            by_user_desc_day[(user, desc, day)] = row
+
     missing = db.query(Ticket).filter(
         (Ticket.question_id == None) | (Ticket.question_id == "")  # noqa: E711
     ).all()
     linked = 0
+    matched_rows = 0
+    matched_but_no_qid = 0
     for ticket in missing:
         row = by_external.get(ticket.external_report_id)
         if not row:
-            for candidate in rows:
-                if (
-                    candidate.get("User id", "").strip() == ticket.user_id
-                    and candidate.get("Creation datetime", "").strip()
-                    == ticket.creation_datetime
-                    and candidate.get("Description", "").strip()
-                    == ticket.student_description
-                ):
-                    row = candidate
-                    break
+            row = by_user_created_desc.get(
+                (ticket.user_id, ticket.creation_datetime, ticket.student_description)
+            )
+        if not row:
+            row = by_user_org_created.get(
+                (ticket.user_id, ticket.org_assessment_id, ticket.creation_datetime)
+            )
+        if not row:
+            row = by_user_desc_day.get(
+                (ticket.user_id, ticket.student_description, ticket.report_date or "")
+            )
         if not row:
             continue
+        matched_rows += 1
         fields = row_to_ticket_fields(
             row, report_date_for_row(row, parse_iso_date(ticket.report_date or "")), db
         )
         if not (fields.get("question_id") or "").strip():
+            matched_but_no_qid += 1
             continue
         if _fill_missing_question_fields(ticket, fields, db):
             linked += 1
@@ -410,6 +435,8 @@ def _apply_scraped_rows_to_missing_question_tickets(
 
     return {
         "scraped_rows": len(rows),
+        "matched_missing_tickets": matched_rows,
+        "matched_but_source_no_qid": matched_but_no_qid,
         "question_ids_linked": linked,
         "enriched": enrich_result["updated"],
         "enrich_skipped": enrich_result["skipped"],
