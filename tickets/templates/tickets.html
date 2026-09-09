@@ -168,10 +168,10 @@
           data-report-date="{{ t.report_date or '' }}"
           data-status="{{ t.status }}"
         >
-          <td class="mono"><a href="/tickets/{{ t.id }}?return_to={{ list_return_to | urlencode }}">#{{ t.id }}</a></td>
+          <td class="mono"><a href="/tickets/{{ t.id }}?return_to={{ list_return_to | urlencode }}" target="_blank" rel="noopener noreferrer">#{{ t.id }}</a></td>
           <td class="mono">{{ t.report_date or "—" }}</td>
           <td class="desc">
-            <a href="/tickets/{{ t.id }}?return_to={{ list_return_to | urlencode }}">{{ t.student_description or "(no description)" }}</a>
+            <a href="/tickets/{{ t.id }}?return_to={{ list_return_to | urlencode }}" target="_blank" rel="noopener noreferrer">{{ t.student_description or "(no description)" }}</a>
           </td>
           <td>
             {% if t.criticality == "Critical" %}
@@ -248,5 +248,6 @@
 {% include "_not_mine_modal.html" %}
 {% endblock %}
 {% block scripts %}
-<script src="/static/board.js?v=resolve-ajax-2"></script>
+<script src="/static/ticket-sync.js?v=tab-sync-2"></script>
+<script src="/static/board.js?v=tab-sync-2"></script>
 {% endblock %}

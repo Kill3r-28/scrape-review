@@ -628,6 +628,43 @@ def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db
     )
 
 
+@app.get("/api/tickets/statuses")
+def api_ticket_statuses(
+    request: Request,
+    ids: str = Query(""),
+    db: Session = Depends(get_db),
+):
+    """Lightweight status lookup for board sync after resolving in another tab."""
+    user = get_current_user(request, db)
+    if not user:
+        return JSONResponse({"ok": False, "error": "login required"}, status_code=401)
+    raw_ids = [part.strip() for part in (ids or "").split(",") if part.strip()]
+    ticket_ids: list[int] = []
+    for part in raw_ids[:200]:
+        try:
+            ticket_ids.append(int(part))
+        except ValueError:
+            continue
+    if not ticket_ids:
+        return {"ok": True, "tickets": []}
+    rows = (
+        db.query(Ticket.id, Ticket.status, Ticket.report_date)
+        .filter(Ticket.id.in_(ticket_ids))
+        .all()
+    )
+    return {
+        "ok": True,
+        "tickets": [
+            {
+                "id": row.id,
+                "status": row.status,
+                "report_date": row.report_date or "",
+            }
+            for row in rows
+        ],
+    }
+
+
 @app.post("/tickets/{ticket_id}/update")
 def update_ticket(
     ticket_id: int,
@@ -641,12 +678,17 @@ def update_ticket(
 ):
     user = get_current_user(request, db)
     if not user:
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "error": "login required"}, status_code=401)
         return _login_redirect()
 
     ticket = db.get(Ticket, ticket_id)
     if not ticket or not can_edit_ticket(user, ticket):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "error": "not allowed"}, status_code=403)
         return RedirectResponse("/", status_code=303)
 
+    prev_status = ticket.status
     notes_clean = notes.strip()
     use_group = apply_question_group == "1" and bool((ticket.question_id or "").strip())
     group = related_question_tickets(db, ticket, return_to=return_to) if use_group else [ticket]
@@ -676,6 +718,28 @@ def update_ticket(
         else:
             db.add(item)
     db.commit()
+
+    ticket_ids = [item.id for item in editable]
+    if _wants_json(request):
+        redirect = ""
+        if new_status == STATUS_RESOLVED and use_group and len(editable) > 1:
+            msg = quote_plus(f"Resolved {len(editable)} tickets for this question")
+            target = safe_return_to(return_to) or "/"
+            sep = "&" if "?" in target else "?"
+            redirect = f"{target}{sep}msg={msg}"
+        else:
+            redirect = ticket_detail_url(ticket_id, return_to)
+        return JSONResponse(
+            {
+                "ok": True,
+                "ticket_id": ticket_id,
+                "ticket_ids": ticket_ids,
+                "status": new_status,
+                "prev_status": prev_status,
+                "report_date": ticket.report_date or "",
+                "redirect": redirect,
+            }
+        )
 
     if new_status == STATUS_RESOLVED and use_group and len(editable) > 1:
         msg = quote_plus(f"Resolved {len(editable)} tickets for this question")
