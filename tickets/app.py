@@ -6,7 +6,7 @@ import os
 from calendar import monthrange
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 from fastapi import Depends, FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -40,6 +40,7 @@ from tickets.config import (
     RULE_TYPE_ASSESSMENT,
     RULE_TYPE_TOPIC,
     SME_NOT_MINE,
+    STATUS_IN_PROGRESS,
     STATUS_OPEN,
     STATUS_RESOLVED,
     TICKET_STATUSES,
@@ -76,13 +77,18 @@ def _login_redirect() -> RedirectResponse:
     return RedirectResponse("/login", status_code=303)
 
 
+def _wants_json(request: Request) -> bool:
+    accept = (request.headers.get("accept") or "").lower()
+    return "application/json" in accept
+
+
 def visible_ticket_query(db: Session, user: User):
     return db.query(Ticket)
 
 
 def apply_common_filters(
     query,
-    user: User,
+    user: User | None = None,
     *,
     programme: str = "",
     sme: str = "",
@@ -90,6 +96,7 @@ def apply_common_filters(
     end_date: str = "",
     q: str = "",
 ):
+    del user
     if programme:
         query = query.filter(Ticket.programme == programme)
     if sme:
@@ -187,6 +194,86 @@ def safe_return_to(value: str) -> str:
     if cleaned.startswith("/") and not cleaned.startswith("//"):
         return cleaned
     return ""
+
+
+def parse_return_to_filters(return_to: str) -> dict[str, str]:
+    """Extract board filters from a return_to path like /?status=open&sme=…"""
+    cleaned = safe_return_to(return_to)
+    if not cleaned:
+        return {}
+    parsed = urlparse(cleaned)
+    raw = parse_qs(parsed.query)
+    return {key: (vals[0] if vals else "") for key, vals in raw.items()}
+
+
+def related_question_tickets(
+    db: Session,
+    ticket: Ticket,
+    *,
+    return_to: str = "",
+) -> list[Ticket]:
+    """
+    Same question_id, same SME, open/in_progress only, matching board filters.
+    Returns [] when question_id is missing (caller keeps single-ticket flow).
+    """
+    qid = (ticket.question_id or "").strip()
+    if not qid:
+        return []
+
+    filters = parse_return_to_filters(return_to)
+    programme = filters.get("programme", "")
+    start_date = filters.get("start_date", "")
+    end_date = filters.get("end_date", "")
+    q = filters.get("q", "")
+    cal_year = filters.get("cal_year", "")
+    cal_month = filters.get("cal_month", "")
+
+    if not start_date and not end_date and cal_year and cal_month:
+        try:
+            year_i = int(cal_year)
+            month_i = int(cal_month)
+            if 1 <= month_i <= 12:
+                start_date = date(year_i, month_i, 1).isoformat()
+                end_date = date(year_i, month_i, monthrange(year_i, month_i)[1]).isoformat()
+        except ValueError:
+            pass
+
+    query = (
+        db.query(Ticket)
+        .filter(
+            Ticket.question_id == qid,
+            Ticket.sme_name == ticket.sme_name,
+            Ticket.status.in_([STATUS_OPEN, STATUS_IN_PROGRESS]),
+        )
+    )
+    query = apply_common_filters(
+        query,
+        programme=programme,
+        sme="",  # SME already locked to ticket.sme_name
+        start_date=start_date,
+        end_date=end_date,
+        q=q,
+    )
+    # Always include the opened ticket even if it somehow falls outside date filters.
+    siblings = query.order_by(Ticket.report_date.desc(), Ticket.id.desc()).limit(200).all()
+    by_id = {t.id: t for t in siblings}
+    if ticket.id not in by_id and ticket.status in (STATUS_OPEN, STATUS_IN_PROGRESS):
+        by_id[ticket.id] = ticket
+    ordered = sorted(
+        by_id.values(),
+        key=lambda t: (0 if t.id == ticket.id else 1, str(t.report_date or ""), -t.id),
+    )
+    return ordered
+
+
+def shared_notes_for_group(tickets: list[Ticket], fallback: Ticket) -> str:
+    """Prefer the longest non-empty notes in the group."""
+    best = (fallback.notes or "").strip()
+    for t in tickets:
+        note = (t.notes or "").strip()
+        if len(note) > len(best):
+            best = note
+    return best
 
 
 def filter_query_string(
@@ -504,6 +591,17 @@ def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db
         return RedirectResponse("/", status_code=303)
 
     return_to = safe_return_to(request.query_params.get("return_to", ""))
+    related = related_question_tickets(db, ticket, return_to=return_to)
+    question_group = bool((ticket.question_id or "").strip()) and len(related) >= 1
+    # Single-ticket flow when no question_id; with qid always use group mode (at least self).
+    if not (ticket.question_id or "").strip():
+        related = [ticket]
+        question_group = False
+    elif ticket not in related and ticket.id not in {t.id for t in related}:
+        related = [ticket] + related
+
+    shared_notes = shared_notes_for_group(related, ticket) if question_group else (ticket.notes or "")
+
     return templates.TemplateResponse(
         request,
         "ticket_detail.html",
@@ -511,10 +609,14 @@ def ticket_detail(ticket_id: int, request: Request, db: Session = Depends(get_db
             "user": user,
             "is_admin": is_admin(user),
             "ticket": ticket,
+            "related_tickets": related if question_group else [],
+            "question_group": question_group,
+            "shared_notes": shared_notes,
             "can_mark_not_mine": can_mark_not_mine(user, ticket),
             "can_claim": can_claim_ticket(user, ticket),
             "can_edit": can_edit_ticket(user, ticket),
             "error": request.query_params.get("err", ""),
+            "message": request.query_params.get("msg", ""),
             "return_to": return_to,
             "tag_list": [t.strip() for t in (ticket.question_tags or "").split(",") if t.strip()],
             "statuses": TICKET_STATUSES,
@@ -533,6 +635,7 @@ def update_ticket(
     sme_name: str = Form(""),
     notes: str = Form(""),
     return_to: str = Form(""),
+    apply_question_group: str = Form(""),
     db: Session = Depends(get_db),
 ):
     user = get_current_user(request, db)
@@ -543,7 +646,14 @@ def update_ticket(
     if not ticket or not can_edit_ticket(user, ticket):
         return RedirectResponse("/", status_code=303)
 
-    ticket.notes = notes.strip()
+    notes_clean = notes.strip()
+    use_group = apply_question_group == "1" and bool((ticket.question_id or "").strip())
+    group = related_question_tickets(db, ticket, return_to=return_to) if use_group else [ticket]
+    if use_group and ticket.id not in {t.id for t in group}:
+        group = [ticket] + group
+    if not group:
+        group = [ticket]
+
     if is_admin(user):
         cleaned = sme_name.strip() or "Unassigned"
         if cleaned in list_assignable_smes(db) or cleaned == SME_NOT_MINE:
@@ -555,7 +665,23 @@ def update_ticket(
         else:
             new_status = ticket.status
 
-    set_ticket_status(db, ticket, new_status)
+    editable = [item for item in group if item.id == ticket.id or can_edit_ticket(user, item)]
+    for item in editable:
+        item.notes = notes_clean
+        if new_status == STATUS_RESOLVED:
+            set_ticket_status(db, item, STATUS_RESOLVED)
+        elif item.id == ticket.id:
+            set_ticket_status(db, item, new_status)
+        else:
+            db.add(item)
+    db.commit()
+
+    if new_status == STATUS_RESOLVED and use_group and len(editable) > 1:
+        msg = quote_plus(f"Resolved {len(editable)} tickets for this question")
+        target = safe_return_to(return_to) or "/"
+        sep = "&" if "?" in target else "?"
+        return RedirectResponse(f"{target}{sep}msg={msg}", status_code=303)
+
     return RedirectResponse(ticket_detail_url(ticket_id, return_to), status_code=303)
 
 
@@ -563,10 +689,27 @@ def update_ticket(
 def quick_resolve(ticket_id: int, request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "error": "login required"}, status_code=401)
         return _login_redirect()
     ticket = db.get(Ticket, ticket_id)
-    if ticket and can_edit_ticket(user, ticket):
-        set_ticket_status(db, ticket, STATUS_RESOLVED)
+    if not ticket or not can_edit_ticket(user, ticket):
+        if _wants_json(request):
+            return JSONResponse({"ok": False, "error": "not allowed"}, status_code=403)
+        return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
+
+    prev_status = ticket.status
+    set_ticket_status(db, ticket, STATUS_RESOLVED)
+    if _wants_json(request):
+        return JSONResponse(
+            {
+                "ok": True,
+                "ticket_id": ticket_id,
+                "status": STATUS_RESOLVED,
+                "prev_status": prev_status,
+                "report_date": ticket.report_date or "",
+            }
+        )
     return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
 
 

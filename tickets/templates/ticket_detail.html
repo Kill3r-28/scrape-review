@@ -7,6 +7,9 @@
 {% if error %}
 <p class="stat active" style="display:inline-block;margin-bottom:1rem;">{{ error }}</p>
 {% endif %}
+{% if message %}
+<p class="stat" style="display:inline-block;margin-bottom:1rem;">{{ message }}</p>
+{% endif %}
 <article class="detail">
   <header class="detail-head">
     <div>
@@ -64,10 +67,35 @@
     {% endif %}
   </section>
 
+  {% if question_group %}
+  <section class="card">
+    <h2>Same question · {{ related_tickets|length }} open for {{ ticket.sme_name }}</h2>
+    <p class="muted small">Open and in-progress tickets with this question ID for this SME, matching your board filters.</p>
+    <ul class="related-tickets">
+      {% for t in related_tickets %}
+      <li class="{% if t.id == ticket.id %}is-current{% endif %}">
+        {% if t.id == ticket.id %}
+        <span class="related-id mono">#{{ t.id }}</span>
+        {% else %}
+        <a class="related-id mono" href="/tickets/{{ t.id }}{% if return_to %}?return_to={{ return_to|urlencode }}{% endif %}">#{{ t.id }}</a>
+        {% endif %}
+        <span class="muted">{{ t.report_date or "—" }}</span>
+        <span class="badge status-{{ t.status }}">{{ t.status.replace('_', ' ') }}</span>
+        <span class="related-desc">{{ (t.student_description or "")[:120] }}{% if (t.student_description or "")|length > 120 %}…{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {% if can_edit %}
   <form class="card form-grid" method="post" action="/tickets/{{ ticket.id }}/update">
     {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}" />{% endif %}
-    <h2>Resolution</h2>
+    {% if question_group %}<input type="hidden" name="apply_question_group" value="1" />{% endif %}
+    <h2>Resolution{% if question_group %} · shared across {{ related_tickets|length }}{% endif %}</h2>
+    {% if question_group %}
+    <p class="muted small full">Notes are shared for this question. Setting status to <strong>resolved</strong> resolves all {{ related_tickets|length }} tickets listed above.</p>
+    {% endif %}
     <label>
       Ticket status
       <select name="status">
@@ -89,17 +117,20 @@
       {% endif %}
     </label>
     <label class="full">
-      Notes
-      <textarea name="notes" rows="4" placeholder="Follow-up notes">{{ ticket.notes }}</textarea>
+      {% if question_group %}Shared notes{% else %}Notes{% endif %}
+      <textarea name="notes" rows="4" placeholder="Follow-up notes">{% if question_group %}{{ shared_notes }}{% else %}{{ ticket.notes }}{% endif %}</textarea>
     </label>
     <div class="full">
-      <button type="submit">Save</button>
+      <button type="submit">{% if question_group %}Save for all {{ related_tickets|length }}{% else %}Save{% endif %}</button>
     </div>
   </form>
   {% elif not is_admin %}
   <section class="card">
     <h2>Resolution</h2>
     <p class="muted">Assigned to <strong>{{ ticket.sme_name }}</strong>. You can view this ticket but only the assigned SME can update it.</p>
+    {% if ticket.notes %}
+    <p class="body-text" style="margin-top:0.75rem;">{{ ticket.notes }}</p>
+    {% endif %}
   </section>
   {% endif %}
 

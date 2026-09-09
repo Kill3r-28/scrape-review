@@ -216,6 +216,32 @@ button, .btn-resolve {
   border: 1px solid var(--line-soft);
 }
 .btn-resolve { background: linear-gradient(90deg, #2d8f5f, #3cb878); }
+.btn-resolve.is-resolved {
+  background: #e3f6ec;
+  color: #1f7a4f;
+  box-shadow: none;
+  cursor: default;
+  border: 1px solid #9fd4b5;
+}
+tr[data-ticket-row] td {
+  transition:
+    opacity 0.4s ease,
+    transform 0.4s ease,
+    background-color 0.25s ease,
+    padding 0.4s ease,
+    border-color 0.4s ease;
+}
+tr.row-resolved-pending td {
+  background: #e8f7ef !important;
+}
+tr.row-leaving td {
+  opacity: 0 !important;
+  transform: translateX(28px);
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border-color: transparent !important;
+  pointer-events: none;
+}
 
 .panel {
   background: var(--panel);
@@ -482,6 +508,37 @@ a.btn-ghost {
   line-height: 1.55;
   white-space: pre-wrap;
 }
+.related-tickets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+.related-tickets li {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  gap: 0.55rem 0.75rem;
+  align-items: baseline;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line-soft);
+  border-radius: calc(var(--radius) - 2px);
+  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+}
+.related-tickets li.is-current {
+  border-color: color-mix(in srgb, var(--accent, #2a6f6a) 45%, var(--line-soft));
+  background: color-mix(in srgb, var(--accent, #2a6f6a) 8%, var(--panel));
+}
+.related-id {
+  font-weight: 600;
+  text-decoration: none;
+}
+.related-desc {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -649,5 +706,6 @@ body.modal-open { overflow: hidden; }
 @media (max-width: 800px) {
   .stats { grid-template-columns: 1fr 1fr; }
   .form-grid, .meta dl { grid-template-columns: 1fr; }
+  .related-tickets li { grid-template-columns: auto auto 1fr; }
   .topbar { flex-direction: column; align-items: start; }
 }

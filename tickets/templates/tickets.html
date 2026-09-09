@@ -36,6 +36,7 @@
     <a
       class="day-cell {% if not day.in_month %}out{% endif %} {% if day.has_tickets %}has{% endif %} {% if filters.start_date == day.date and filters.end_date == day.date %}selected{% endif %}"
       href="/?status={{ filters.status }}&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ day.date }}&end_date={{ day.date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}"
+      data-cal-date="{{ day.date }}"
     >
       <div class="day-top">
         <strong>{{ day.day }}</strong>
@@ -54,22 +55,22 @@
   </div>
 </section>
 
-<section class="stats">
-  <a class="stat {% if filters.status == 'all' %}active{% endif %}" href="/?status=all&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}">
+<section class="stats" data-board-stats data-status-filter="{{ filters.status }}">
+  <a class="stat {% if filters.status == 'all' %}active{% endif %}" href="/?status=all&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}" data-stat="all">
     <span class="label">All</span>
-    <strong>{{ counts.all }}</strong>
+    <strong data-count="all">{{ counts.all }}</strong>
   </a>
-  <a class="stat {% if filters.status == 'open' %}active{% endif %}" href="/?status=open&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}">
+  <a class="stat {% if filters.status == 'open' %}active{% endif %}" href="/?status=open&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}" data-stat="open">
     <span class="label">Open</span>
-    <strong>{{ counts.open }}</strong>
+    <strong data-count="open">{{ counts.open }}</strong>
   </a>
-  <a class="stat {% if filters.status == 'in_progress' %}active{% endif %}" href="/?status=in_progress&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}">
+  <a class="stat {% if filters.status == 'in_progress' %}active{% endif %}" href="/?status=in_progress&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}" data-stat="in_progress">
     <span class="label">In progress</span>
-    <strong>{{ counts.in_progress }}</strong>
+    <strong data-count="in_progress">{{ counts.in_progress }}</strong>
   </a>
-  <a class="stat {% if filters.status == 'resolved' %}active{% endif %}" href="/?status=resolved&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}">
+  <a class="stat {% if filters.status == 'resolved' %}active{% endif %}" href="/?status=resolved&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ filters.start_date }}&end_date={{ filters.end_date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}" data-stat="resolved">
     <span class="label">Resolved</span>
-    <strong>{{ counts.resolved }}</strong>
+    <strong data-count="resolved">{{ counts.resolved }}</strong>
   </a>
 </section>
 
@@ -160,7 +161,13 @@
       </thead>
       <tbody>
         {% for t in tickets %}
-        <tr class="{% if not is_admin and t.sme_name == current_sme_name %}assigned-me{% endif %}">
+        <tr
+          class="{% if not is_admin and t.sme_name == current_sme_name %}assigned-me{% endif %}"
+          data-ticket-row
+          data-ticket-id="{{ t.id }}"
+          data-report-date="{{ t.report_date or '' }}"
+          data-status="{{ t.status }}"
+        >
           <td class="mono"><a href="/tickets/{{ t.id }}?return_to={{ list_return_to | urlencode }}">#{{ t.id }}</a></td>
           <td class="mono">{{ t.report_date or "—" }}</td>
           <td class="desc">
@@ -177,7 +184,7 @@
             <span class="muted">—</span>
             {% endif %}
           </td>
-          <td><span class="badge status-{{ t.status }}">{{ t.status.replace('_', ' ') }}</span></td>
+          <td><span class="badge status-{{ t.status }}" data-status-badge>{{ t.status.replace('_', ' ') }}</span></td>
           <td>
             {% if is_admin %}
             <form method="post" action="/tickets/{{ t.id }}/assign" class="inline-assign">
@@ -209,7 +216,7 @@
           <td class="actions">
             {% if t.status != 'resolved' %}
             {% if is_admin or (not is_admin and t.sme_name == current_sme_name) %}
-            <form method="post" action="/tickets/{{ t.id }}/quick-resolve">
+            <form method="post" action="/tickets/{{ t.id }}/quick-resolve" class="js-quick-resolve">
               <button type="submit" class="btn-resolve">Resolve</button>
             </form>
             {% endif %}
@@ -241,5 +248,5 @@
 {% include "_not_mine_modal.html" %}
 {% endblock %}
 {% block scripts %}
-<script src="/static/board.js"></script>
+<script src="/static/board.js?v=resolve-ajax-2"></script>
 {% endblock %}
