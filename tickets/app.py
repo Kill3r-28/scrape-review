@@ -47,10 +47,13 @@ from tickets.config import (
 )
 from tickets.db import get_db, init_db
 from tickets.ingest import (
+    advance_ingest_cursor,
+    ensure_all_question_ids,
+    get_ingest_cursor,
     ingest_date,
     ingest_date_range,
     ingest_previous_day,
-    ensure_all_question_ids,
+    resolve_update_start,
     set_ticket_status,
 )
 from tickets.models import AssignmentRule, NotMineFeedback, Ticket, WhatsAppDraft
@@ -368,20 +371,26 @@ def admin_update_plan(
         return JSONResponse(
             {"ok": False, "error": "That month is in the future — nothing to update"}
         )
-    start, end, target_year, target_month = bounds
+    month_start, end, target_year, target_month = bounds
+    start, cursor = resolve_update_start(db, month_start, end)
     dates: list[str] = []
-    cursor = start
-    while cursor <= end:
-        dates.append(cursor.isoformat())
-        cursor += timedelta(days=1)
+    day = start
+    while day <= end:
+        dates.append(day.isoformat())
+        day += timedelta(days=1)
+    resume_label = (cursor.last_through_creation or cursor.last_through_date or "").strip()
     return {
         "ok": True,
         "year": target_year,
         "month": target_month,
+        "month_start": month_start.isoformat(),
         "start": start.isoformat(),
         "end": end.isoformat(),
         "dates": dates,
         "total_days": len(dates),
+        "resume_from": cursor.last_through_date or None,
+        "resume_label": resume_label or None,
+        "resumed": start > month_start,
     }
 
 
@@ -401,12 +410,15 @@ async def admin_update_day(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "Invalid date"}, status_code=400)
     try:
         result = ingest_date(db, target, enrich=True)
+        cursor = advance_ingest_cursor(db, target)
         return {
             "ok": True,
             "date": target.isoformat(),
             "created": result.get("created", 0),
             "skipped": result.get("skipped", 0),
             "total_rows": result.get("total_rows", 0),
+            "cursor_through": cursor.last_through_date,
+            "cursor_creation": cursor.last_through_creation or None,
         }
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
@@ -426,7 +438,13 @@ def admin_update_finalize(request: Request, db: Session = Depends(get_db)):
         return JSONResponse({"ok": False, "error": "Admin only"}, status_code=403)
     try:
         crit = assign_criticality_all(db, only_missing=True)
-        return {"ok": True, "criticality_updated": crit.get("updated", 0)}
+        cursor = get_ingest_cursor(db)
+        return {
+            "ok": True,
+            "criticality_updated": crit.get("updated", 0),
+            "cursor_through": cursor.last_through_date or None,
+            "cursor_creation": cursor.last_through_creation or None,
+        }
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": str(exc)[:240]}, status_code=500)
 
@@ -451,14 +469,21 @@ def admin_update_reports(
             f"&cal_year={year or today.year}&cal_month={month or today.month}",
             status_code=303,
         )
-    start, end, target_year, target_month = bounds
+    month_start, end, target_year, target_month = bounds
+    start, cursor = resolve_update_start(db, month_start, end)
 
     try:
         result = ingest_date_range(db, start, end, enrich=True)
+        advance_ingest_cursor(db, end)
         crit = assign_criticality_all(db, only_missing=True)
+        resume_note = ""
+        if start > month_start and (cursor.last_through_creation or cursor.last_through_date):
+            resume_note = (
+                f" (resumed from {cursor.last_through_creation or cursor.last_through_date})"
+            )
         msg = (
             f"Updated {result.get('start_date', start.isoformat())} → "
-            f"{result.get('end_date', end.isoformat())}: "
+            f"{result.get('end_date', end.isoformat())}{resume_note}: "
             f"created {result.get('created', 0)}, "
             f"skipped {result.get('skipped', 0)}, "
             f"criticality {crit.get('updated', 0)}"

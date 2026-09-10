@@ -81,8 +81,27 @@
       var created = 0;
       var skipped = 0;
       setProgress(0, total);
-      currentEl.textContent =
-        "Fetching " + plan.start + " → " + plan.end + " (" + total + " days)";
+      if (plan.resumed && plan.resume_label) {
+        logLine(
+          "Resuming from last stop: " + plan.resume_label + " (day " + plan.start + ")",
+          "ok"
+        );
+        currentEl.textContent =
+          "Resuming from " +
+          plan.resume_label +
+          " → " +
+          plan.end +
+          " (" +
+          total +
+          " days)";
+      } else if (plan.resume_label) {
+        logLine("Last stop: " + plan.resume_label, "ok");
+        currentEl.textContent =
+          "Fetching " + plan.start + " → " + plan.end + " (" + total + " days)";
+      } else {
+        currentEl.textContent =
+          "Fetching " + plan.start + " → " + plan.end + " (" + total + " days)";
+      }
 
       for (var i = 0; i < dates.length; i++) {
         var day = dates[i];
@@ -148,6 +167,9 @@
             plan.start +
             " → " +
             plan.end +
+            (plan.resumed && plan.resume_label
+              ? " (resumed from " + plan.resume_label + ")"
+              : "") +
             ": created " +
             created +
             ", skipped " +

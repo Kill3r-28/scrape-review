@@ -20,10 +20,108 @@ from scrape import (
 )
 from tickets.calendar_view import parse_iso_date
 from tickets.config import STATUS_OPEN, STATUS_RESOLVED
-from tickets.models import Ticket
+from tickets.models import IngestCursor, Ticket
 from tickets.routing import route_ticket
 
 IST = ZoneInfo("Asia/Kolkata")
+
+
+def get_ingest_cursor(db: Session) -> IngestCursor:
+    """Return the singleton ingest cursor row (create empty if missing)."""
+    row = db.get(IngestCursor, 1)
+    if row is None:
+        row = IngestCursor(id=1, last_through_date="", last_through_creation="")
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+    return row
+
+
+def bootstrap_ingest_cursor(db: Session) -> IngestCursor:
+    """
+    Ensure cursor reflects where we last stopped.
+    If never set, derive from the newest ticket's report_date / creation_datetime.
+    """
+    cursor = get_ingest_cursor(db)
+    if cursor.last_through_date:
+        return cursor
+
+    tickets = db.query(Ticket).filter(Ticket.report_date != "").all()
+    best_date = ""
+    best_creation = ""
+    best_dt: datetime | None = None
+    for t in tickets:
+        raw = (t.creation_datetime or "").strip()
+        parsed = parse_creation_datetime(raw) if raw else None
+        if parsed is not None:
+            if best_dt is None or parsed > best_dt:
+                best_dt = parsed
+                best_date = parsed.date().isoformat()
+                best_creation = raw
+            continue
+        # Fallback: report_date only
+        if t.report_date and t.report_date > best_date and best_dt is None:
+            best_date = t.report_date
+            best_creation = raw or t.report_date
+
+    if best_date:
+        cursor.last_through_date = best_date
+        cursor.last_through_creation = best_creation
+        db.commit()
+        db.refresh(cursor)
+    return cursor
+
+
+def advance_ingest_cursor(db: Session, through_date: date, creation: str = "") -> IngestCursor:
+    """Move watermark forward after a successful day ingest (never move backwards)."""
+    cursor = get_ingest_cursor(db)
+    iso = through_date.isoformat()
+    if cursor.last_through_date and iso < cursor.last_through_date:
+        return cursor
+
+    cursor.last_through_date = iso
+    if creation.strip():
+        cursor.last_through_creation = creation.strip()
+    else:
+        best_creation = ""
+        best_dt: datetime | None = None
+        for t in db.query(Ticket).filter(Ticket.report_date == iso).all():
+            raw = (t.creation_datetime or "").strip()
+            if not raw:
+                continue
+            parsed = parse_creation_datetime(raw)
+            if parsed is None:
+                if not best_creation:
+                    best_creation = raw
+                continue
+            if best_dt is None or parsed > best_dt:
+                best_dt = parsed
+                best_creation = raw
+        if best_creation:
+            cursor.last_through_creation = best_creation
+    db.commit()
+    db.refresh(cursor)
+    return cursor
+
+
+def resolve_update_start(
+    db: Session, month_start: date, month_end: date
+) -> tuple[date, IngestCursor]:
+    """
+    Start date for Update within [month_start, month_end].
+    Resumes from last_through_date (inclusive) when that watermark falls in/before the month.
+    """
+    cursor = bootstrap_ingest_cursor(db)
+    if not cursor.last_through_date:
+        return month_start, cursor
+    try:
+        resume = date.fromisoformat(cursor.last_through_date)
+    except ValueError:
+        return month_start, cursor
+    # Already past this month — allow a full re-fetch of that historical month.
+    if resume > month_end:
+        return month_start, cursor
+    return max(month_start, resume), cursor
 
 
 def build_external_report_id(row: dict[str, str]) -> str:

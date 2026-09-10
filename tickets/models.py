@@ -136,3 +136,24 @@ class AssignmentRule(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
+
+class IngestCursor(Base):
+    """
+    Singleton watermark for admin Update: where the last successful ingest stopped.
+    Update resumes from last_through_date (inclusive) instead of month day 1.
+    """
+
+    __tablename__ = "ingest_cursor"
+
+    id: Mapped[int] = mapped_column(primary_key=True)  # always row id=1
+    # ISO date of the last day we finished scraping successfully.
+    last_through_date: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    # Newest report Creation datetime string seen (e.g. "Sept. 9, 2026, 3:00 p.m.").
+    last_through_creation: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
