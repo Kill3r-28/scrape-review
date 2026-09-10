@@ -143,6 +143,21 @@
 
   function applyRemoteStatus(payload) {
     if (!payload || payload.status !== "resolved") return;
+    if (Array.isArray(payload.tickets) && payload.tickets.length) {
+      payload.tickets.forEach((item) => {
+        const row = document.querySelector(
+          `[data-ticket-row][data-ticket-id="${item.id}"]`
+        );
+        if (!row) return;
+        markRowResolved(
+          row,
+          item.prev_status || row.dataset.status,
+          item.report_date || row.dataset.reportDate || "",
+          { delayVanish: 800 }
+        );
+      });
+      return;
+    }
     const ids = Array.isArray(payload.ticket_ids) && payload.ticket_ids.length
       ? payload.ticket_ids
       : payload.ticket_id
@@ -151,9 +166,12 @@
     ids.forEach((id) => {
       const row = document.querySelector(`[data-ticket-row][data-ticket-id="${id}"]`);
       if (!row) return;
-      markRowResolved(row, payload.prev_status || row.dataset.status, payload.report_date, {
-        delayVanish: 800,
-      });
+      markRowResolved(
+        row,
+        payload.prev_status || row.dataset.status,
+        row.dataset.reportDate || payload.report_date || "",
+        { delayVanish: 800 }
+      );
     });
   }
 
@@ -221,12 +239,36 @@
           return;
         }
 
-        markRowResolved(row, prevStatus, data.report_date || row.dataset.reportDate || "");
+        const group =
+          Array.isArray(data.tickets) && data.tickets.length
+            ? data.tickets
+            : [
+                {
+                  id: data.ticket_id || Number(row.dataset.ticketId),
+                  prev_status: prevStatus,
+                  report_date: data.report_date || row.dataset.reportDate || "",
+                },
+              ];
+        group.forEach((item) => {
+          const target =
+            Number(item.id) === Number(row.dataset.ticketId)
+              ? row
+              : document.querySelector(
+                  `[data-ticket-row][data-ticket-id="${item.id}"]`
+                );
+          if (!target) return;
+          markRowResolved(
+            target,
+            item.prev_status || target.dataset.status || "open",
+            item.report_date || target.dataset.reportDate || ""
+          );
+        });
         if (window.TicketSync) {
           window.TicketSync.publish({
             type: "status",
             ticket_id: data.ticket_id || Number(row.dataset.ticketId),
-            ticket_ids: [data.ticket_id || Number(row.dataset.ticketId)],
+            ticket_ids: group.map((item) => item.id),
+            tickets: group,
             status: "resolved",
             prev_status: prevStatus,
             report_date: data.report_date || row.dataset.reportDate || "",

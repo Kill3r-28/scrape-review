@@ -215,32 +215,16 @@ def related_question_tickets(
     ticket: Ticket,
     *,
     return_to: str = "",
+    board_scoped: bool = True,
 ) -> list[Ticket]:
     """
-    Same question_id, same SME, open/in_progress only, matching board filters.
+    Same question_id, same SME, open/in_progress only.
+    When board_scoped=True, also match board filters from return_to.
     Returns [] when question_id is missing (caller keeps single-ticket flow).
     """
     qid = (ticket.question_id or "").strip()
     if not qid:
         return []
-
-    filters = parse_return_to_filters(return_to)
-    programme = filters.get("programme", "")
-    start_date = filters.get("start_date", "")
-    end_date = filters.get("end_date", "")
-    q = filters.get("q", "")
-    cal_year = filters.get("cal_year", "")
-    cal_month = filters.get("cal_month", "")
-
-    if not start_date and not end_date and cal_year and cal_month:
-        try:
-            year_i = int(cal_year)
-            month_i = int(cal_month)
-            if 1 <= month_i <= 12:
-                start_date = date(year_i, month_i, 1).isoformat()
-                end_date = date(year_i, month_i, monthrange(year_i, month_i)[1]).isoformat()
-        except ValueError:
-            pass
 
     query = (
         db.query(Ticket)
@@ -250,14 +234,33 @@ def related_question_tickets(
             Ticket.status.in_([STATUS_OPEN, STATUS_IN_PROGRESS]),
         )
     )
-    query = apply_common_filters(
-        query,
-        programme=programme,
-        sme="",  # SME already locked to ticket.sme_name
-        start_date=start_date,
-        end_date=end_date,
-        q=q,
-    )
+    if board_scoped:
+        filters = parse_return_to_filters(return_to)
+        programme = filters.get("programme", "")
+        start_date = filters.get("start_date", "")
+        end_date = filters.get("end_date", "")
+        q = filters.get("q", "")
+        cal_year = filters.get("cal_year", "")
+        cal_month = filters.get("cal_month", "")
+
+        if not start_date and not end_date and cal_year and cal_month:
+            try:
+                year_i = int(cal_year)
+                month_i = int(cal_month)
+                if 1 <= month_i <= 12:
+                    start_date = date(year_i, month_i, 1).isoformat()
+                    end_date = date(year_i, month_i, monthrange(year_i, month_i)[1]).isoformat()
+            except ValueError:
+                pass
+
+        query = apply_common_filters(
+            query,
+            programme=programme,
+            sme="",  # SME already locked to ticket.sme_name
+            start_date=start_date,
+            end_date=end_date,
+            q=q,
+        )
     # Always include the opened ticket even if it somehow falls outside date filters.
     siblings = query.order_by(Ticket.report_date.desc(), Ticket.id.desc()).limit(200).all()
     by_id = {t.id: t for t in siblings}
@@ -789,12 +792,41 @@ def quick_resolve(ticket_id: int, request: Request, db: Session = Depends(get_db
         return RedirectResponse(request.headers.get("referer", "/"), status_code=303)
 
     prev_status = ticket.status
-    set_ticket_status(db, ticket, STATUS_RESOLVED)
+    # Same as detail "Save for all": resolve every open/in_progress sibling
+    # with the same question_id + SME (not just the clicked row).
+    if (ticket.question_id or "").strip():
+        group = related_question_tickets(db, ticket, board_scoped=False)
+        if ticket.id not in {t.id for t in group}:
+            group = [ticket] + list(group)
+    else:
+        group = [ticket]
+    if not group:
+        group = [ticket]
+
+    resolved_payload: list[dict] = []
+    for item in group:
+        if not can_edit_ticket(user, item):
+            continue
+        item_prev = item.status
+        set_ticket_status(db, item, STATUS_RESOLVED)
+        resolved_payload.append(
+            {
+                "id": item.id,
+                "prev_status": item_prev,
+                "report_date": item.report_date or "",
+            }
+        )
+    db.commit()
+
+    ticket_ids = [row["id"] for row in resolved_payload]
     if _wants_json(request):
         return JSONResponse(
             {
                 "ok": True,
                 "ticket_id": ticket_id,
+                "ticket_ids": ticket_ids,
+                "tickets": resolved_payload,
+                "resolved_count": len(resolved_payload),
                 "status": STATUS_RESOLVED,
                 "prev_status": prev_status,
                 "report_date": ticket.report_date or "",
