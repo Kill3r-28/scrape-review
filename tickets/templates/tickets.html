@@ -1,11 +1,5 @@
 {% extends "base.html" %}
 {% block title %}Open tickets · SME{% endblock %}
-{% block admin_update_fields %}
-{% if calendar %}
-<input type="hidden" name="year" value="{{ calendar.year }}" />
-<input type="hidden" name="month" value="{{ calendar.month }}" />
-{% endif %}
-{% endblock %}
 {% block content %}
 {% set list_return_to = '/?' ~ (
   'status=' ~ (filters.status or 'all') ~
@@ -26,6 +20,7 @@
     <h2>{{ calendar.title }}</h2>
     <a class="btn-ghost" href="{{ calendar.next_href }}">Next →</a>
   </div>
+  <p class="muted small calendar-hint">{% if is_admin %}Click a day to filter tickets. Use <strong>Update</strong> on a day to scrape only that date (jumps to it in admin — no month-from-day-1 walk).{% else %}Click a day to filter tickets.{% endif %}</p>
   <div class="calendar-grid weekdays">
     {% for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] %}
     <div class="weekday">{{ day }}</div>
@@ -33,24 +28,36 @@
   </div>
   <div class="calendar-grid">
     {% for day in calendar.days %}
-    <a
+    <div
       class="day-cell {% if not day.in_month %}out{% endif %} {% if day.has_tickets %}has{% endif %} {% if filters.start_date == day.date and filters.end_date == day.date %}selected{% endif %}"
-      href="/?status={{ filters.status }}&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ day.date }}&end_date={{ day.date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}"
       data-cal-date="{{ day.date }}"
     >
-      <div class="day-top">
-        <strong>{{ day.day }}</strong>
-        {% if day.has_tickets %}<span class="pill">{{ day.total }}</span>{% endif %}
-      </div>
-      {% if day.has_tickets %}
-      <div class="day-stats">
-        <span class="open-count">Open {{ day.open }}</span>
-        <span class="done-count">Done {{ day.resolved }}</span>
-      </div>
-      {% else %}
-      <div class="muted small">No tickets</div>
+      <a
+        class="day-link"
+        href="/?status={{ filters.status }}&programme={{ filters.programme }}&sme={{ filters.sme }}&start_date={{ day.date }}&end_date={{ day.date }}&q={{ filters.q }}&cal_year={{ calendar.year }}&cal_month={{ calendar.month }}"
+      >
+        <div class="day-top">
+          <strong>{{ day.day }}</strong>
+          {% if day.has_tickets %}<span class="pill" data-day-total="{{ day.date }}">{{ day.total }}</span>{% endif %}
+        </div>
+        {% if day.has_tickets %}
+        <div class="day-stats">
+          <span class="open-count">Open {{ day.open }}</span>
+          <span class="done-count">Done {{ day.resolved }}</span>
+        </div>
+        {% else %}
+        <div class="muted small">No tickets</div>
+        {% endif %}
+      </a>
+      {% if is_admin and day.in_month %}
+      <button
+        type="button"
+        class="day-update-btn"
+        data-day-update="{{ day.date }}"
+        title="Scrape reports for {{ day.date }} only"
+      >Update</button>
       {% endif %}
-    </a>
+    </div>
     {% endfor %}
   </div>
 </section>

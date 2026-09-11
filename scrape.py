@@ -174,9 +174,20 @@ def login_with_django_admin(session: requests.Session) -> None:
         raise ValueError("Login failed. Still on the admin login page.")
 
 
-def fetch_page_html(session: requests.Session, page_number: int) -> str:
-    params = {"p": page_number} if page_number > 1 else None
-    response = session.get(REPORT_URL, params=params, timeout=TIMEOUT_SECONDS)
+def fetch_page_html(
+    session: requests.Session,
+    page_number: int,
+    *,
+    extra_params: dict[str, str] | None = None,
+) -> str:
+    params: dict[str, str] = {}
+    if extra_params:
+        params.update(extra_params)
+    if page_number > 1:
+        params["p"] = str(page_number)
+    response = session.get(
+        REPORT_URL, params=params or None, timeout=TIMEOUT_SECONDS
+    )
     response.raise_for_status()
 
     if is_login_page(response):
@@ -215,7 +226,35 @@ def get_total_pages(container: Tag) -> int:
         if match:
             pages.append(int(match.group(1)))
 
+    # Prefer estimate from result count when paginator only shows a window of links.
+    count = get_result_count(container)
+    if count is not None and count > 0:
+        try:
+            row_count = len(extract_rows_from_container(container))
+        except ValueError:
+            row_count = 0
+        per_page = max(row_count, 50)
+        pages.append(max(1, (count + per_page - 1) // per_page))
+
     return max(pages)
+
+
+def get_result_count(container: Tag) -> int | None:
+    paginator = container.find("p", class_="paginator")
+    if not isinstance(paginator, Tag):
+        return None
+    text = paginator.get_text(" ", strip=True)
+    match = re.search(
+        r"([\d,]+)\s+(?:reports?|results?|entries|total)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    try:
+        return int(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
 
 
 def get_text_from_cell(row: Tag, class_name: str, tag_name: str) -> str:
@@ -491,13 +530,184 @@ def save_rows_to_csv(rows: list[dict[str, str]], target_date: date) -> Path:
     return output_path
 
 
-def scrape_reports_for_date(target_date: date) -> list[dict[str, str]]:
-    return scrape_reports_for_date_range(target_date, target_date)
+def scrape_reports_for_date(
+    target_date: date,
+    *,
+    after_datetime: datetime | None = None,
+) -> list[dict[str, str]]:
+    return scrape_reports_for_date_range(
+        target_date, target_date, after_datetime=after_datetime
+    )
+
+
+def _date_filter_param_candidates(start_date: date, end_date: date) -> list[dict[str, str]]:
+    """Common Django admin DateTimeField list-filter query shapes to try."""
+    next_day = date.fromordinal(end_date.toordinal() + 1)
+    if start_date != end_date:
+        return [
+            {
+                "creation_datetime__gte": start_date.isoformat(),
+                "creation_datetime__lt": next_day.isoformat(),
+            }
+        ]
+    return [
+        {"creation_datetime__date": start_date.isoformat()},
+        {"creation_datetime__date__exact": start_date.isoformat()},
+        {
+            "creation_datetime__gte": start_date.isoformat(),
+            "creation_datetime__lt": next_day.isoformat(),
+        },
+        {
+            "creation_datetime__year": str(start_date.year),
+            "creation_datetime__month": str(start_date.month),
+            "creation_datetime__day": str(start_date.day),
+        },
+    ]
+
+
+def _try_admin_date_filter(
+    session: requests.Session,
+    start_date: date,
+    end_date: date,
+) -> tuple[dict[str, str], Tag, list[dict[str, str]]] | None:
+    """
+    Return (params, container, rows) if Django admin appears to honor a date filter.
+    Otherwise None (caller falls back to binary page search).
+    """
+    candidates = _date_filter_param_candidates(start_date, end_date)
+
+    baseline_html = fetch_page_html(session, 1)
+    baseline_rows = extract_rows_from_container(
+        get_container(BeautifulSoup(baseline_html, "html.parser"))
+    )
+    baseline_min, baseline_max = get_page_date_range(baseline_rows)
+
+    for params in candidates:
+        probe = session.get(REPORT_URL, params=params, timeout=TIMEOUT_SECONDS)
+        if is_login_page(probe):
+            continue
+        if not all(k in probe.url for k in params):
+            print(f"Date filter ignored by admin (params dropped): {params}")
+            continue
+        try:
+            container = get_container(BeautifulSoup(probe.text, "html.parser"))
+            rows = extract_rows_from_container(container)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Date filter {params} failed: {exc}")
+            continue
+
+        min_date, max_date = get_page_date_range(rows)
+        if not rows:
+            print(f"Date filter OK (0 rows): {params}")
+            return params, container, rows
+
+        overlaps = (
+            min_date is not None
+            and max_date is not None
+            and min_date <= end_date
+            and max_date >= start_date
+        )
+        looks_unfiltered = (
+            baseline_max is not None
+            and max_date == baseline_max
+            and min_date == baseline_min
+            and max_date is not None
+            and max_date > end_date
+            and (baseline_min is None or start_date < baseline_min)
+        )
+        if overlaps and not looks_unfiltered:
+            print(f"Date filter OK: {params} page1 {min_date}→{max_date}")
+            return params, container, rows
+        print(
+            f"Date filter not useful: {params} page1 {min_date}→{max_date} "
+            f"(baseline {baseline_min}→{baseline_max})"
+        )
+    return None
+
+
+def _fetch_page_bundle(
+    session: requests.Session,
+    page_number: int,
+    cache: dict[int, tuple[list[dict[str, str]], date | None, date | None]],
+    *,
+    extra_params: dict[str, str] | None = None,
+) -> tuple[list[dict[str, str]], date | None, date | None]:
+    if page_number in cache and not extra_params:
+        return cache[page_number]
+    html = fetch_page_html(session, page_number, extra_params=extra_params)
+    rows = extract_rows_from_container(get_container(BeautifulSoup(html, "html.parser")))
+    min_date, max_date = get_page_date_range(rows)
+    bundle = (rows, min_date, max_date)
+    if not extra_params:
+        cache[page_number] = bundle
+    return bundle
+
+
+def _binary_find_first_page_overlapping_end(
+    session: requests.Session,
+    total_pages: int,
+    end_date: date,
+    cache: dict[int, tuple[list[dict[str, str]], date | None, date | None]],
+) -> int:
+    """Smallest page index whose oldest row is <= end_date (pages are newest-first)."""
+    lo, hi = 1, total_pages
+    answer = total_pages
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        _rows, min_date, max_date = _fetch_page_bundle(session, mid, cache)
+        if min_date is None:
+            # Empty / unparsable — search later pages cautiously.
+            lo = mid + 1
+            continue
+        if min_date <= end_date:
+            answer = mid
+            hi = mid - 1
+        else:
+            # Entire page newer than end_date — need older pages.
+            lo = mid + 1
+    return answer
+
+
+def _binary_find_last_page_overlapping_start(
+    session: requests.Session,
+    total_pages: int,
+    start_date: date,
+    cache: dict[int, tuple[list[dict[str, str]], date | None, date | None]],
+) -> int:
+    """Largest page index whose newest row is >= start_date."""
+    lo, hi = 1, total_pages
+    answer = 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        _rows, min_date, max_date = _fetch_page_bundle(session, mid, cache)
+        if max_date is None:
+            hi = mid - 1
+            continue
+        if max_date >= start_date:
+            answer = mid
+            lo = mid + 1
+        else:
+            # Entire page older than start_date — need newer pages.
+            hi = mid - 1
+    return answer
 
 
 def scrape_reports_for_date_range(
-    start_date: date, end_date: date
+    start_date: date,
+    end_date: date,
+    *,
+    after_datetime: datetime | None = None,
 ) -> list[dict[str, str]]:
+    """
+    Collect reports with Creation date in [start_date, end_date].
+
+    Strategy (fast for past days deep in the admin list):
+    1. Try Django admin date-filter query params when possible.
+    2. Else binary-search pagination to jump near the target window, then
+       only walk the overlapping pages (not from page 1 through every month).
+    3. Optional after_datetime: keep only newer rows and stop early (incremental
+       refresh when that day was already partially scraped).
+    """
     if end_date < start_date:
         raise ValueError("end_date must be >= start_date")
 
@@ -505,35 +715,133 @@ def scrape_reports_for_date_range(
     session = create_session()
     login_with_django_admin(session)
 
+    print(f"Collecting reports from {start_date.isoformat()} to {end_date.isoformat()}")
+    if after_datetime is not None:
+        print(f"Incremental: only rows after {after_datetime.isoformat()}")
+
+    all_matches: list[dict[str, str]] = []
+
+    def keep_row(row: dict[str, str]) -> bool:
+        parsed = parse_creation_datetime(row.get("Creation datetime", ""))
+        if not parsed:
+            return False
+        if not (start_date <= parsed.date() <= end_date):
+            return False
+        if after_datetime is not None and parsed <= after_datetime:
+            return False
+        return True
+
+    def collect(rows: list[dict[str, str]]) -> tuple[date | None, date | None, datetime | None]:
+        newest: datetime | None = None
+        for row in rows:
+            parsed = parse_creation_datetime(row.get("Creation datetime", ""))
+            if parsed and (newest is None or parsed > newest):
+                newest = parsed
+            if keep_row(row):
+                all_matches.append(row)
+        min_date, max_date = get_page_date_range(rows)
+        return min_date, max_date, newest
+
+    # --- Path A: server-side date filter ---
+    filtered = _try_admin_date_filter(session, start_date, end_date)
+    if filtered is not None:
+        params, first_container, first_rows = filtered
+        total_pages = get_total_pages(first_container)
+        print(f"Filtered list pages: {total_pages}")
+        min_date, max_date, newest = collect(first_rows)
+        print(f"Filtered page 1: matched so far {len(all_matches)}")
+        # Incremental stop: whole page older than watermark.
+        if (
+            after_datetime is not None
+            and newest is not None
+            and newest <= after_datetime
+            and not any(keep_row(r) for r in first_rows)
+        ):
+            return all_matches
+        for page_number in range(2, total_pages + 1):
+            html = fetch_page_html(session, page_number, extra_params=params)
+            rows = extract_rows_from_container(
+                get_container(BeautifulSoup(html, "html.parser"))
+            )
+            if not rows:
+                break
+            min_date, max_date, newest = collect(rows)
+            print(f"Filtered page {page_number}: matched so far {len(all_matches)}")
+            if min_date is not None and min_date < start_date:
+                break
+            if after_datetime is not None and newest is not None and newest <= after_datetime:
+                break
+        return all_matches
+
+    # --- Path B: binary search on newest-first pages ---
     first_html = fetch_page_html(session, 1)
     first_container = get_container(BeautifulSoup(first_html, "html.parser"))
     total_pages = get_total_pages(first_container)
     print(f"Detected total pages: {total_pages}")
-    print(f"Collecting reports from {start_date.isoformat()} to {end_date.isoformat()}")
 
-    all_matches: list[dict[str, str]] = []
+    cache: dict[int, tuple[list[dict[str, str]], date | None, date | None]] = {}
+    first_rows = extract_rows_from_container(first_container)
+    cache[1] = (first_rows, *get_page_date_range(first_rows))
 
-    def collect(rows: list[dict[str, str]]) -> tuple[date | None, date | None]:
-        for row in rows:
-            parsed = parse_creation_datetime(row.get("Creation datetime", ""))
-            if parsed and start_date <= parsed.date() <= end_date:
-                all_matches.append(row)
-        return get_page_date_range(rows)
+    page1_min, page1_max = get_page_date_range(first_rows)
+    # If the target window is still on/near page 1, just walk forward (fast path).
+    if page1_min is not None and page1_min <= end_date:
+        start_page = 1
+    else:
+        start_page = _binary_find_first_page_overlapping_end(
+            session, total_pages, end_date, cache
+        )
+    end_page = _binary_find_last_page_overlapping_start(
+        session, total_pages, start_date, cache
+    )
+    if end_page < start_page:
+        # Expand total_pages once if estimate was low, then retry end bound.
+        probe_page = total_pages
+        for _ in range(6):
+            rows, min_date, max_date = _fetch_page_bundle(session, probe_page, cache)
+            if not rows:
+                break
+            # If last estimated page still overlaps / is newer than start, peek further.
+            if max_date is not None and max_date >= start_date:
+                probe_page += max(1, total_pages // 4)
+                # Refresh total from this page's paginator if possible.
+                html = fetch_page_html(session, probe_page)
+                container = get_container(BeautifulSoup(html, "html.parser"))
+                rows = extract_rows_from_container(container)
+                cache[probe_page] = (rows, *get_page_date_range(rows))
+                total_pages = max(total_pages, get_total_pages(container), probe_page)
+                end_page = _binary_find_last_page_overlapping_start(
+                    session, total_pages, start_date, cache
+                )
+                if end_page >= start_page:
+                    break
+            else:
+                break
+        if end_page < start_page:
+            print(
+                f"No pages overlap {start_date}→{end_date} "
+                f"(search window pages {start_page}..{end_page})"
+            )
+            return []
 
-    min_date, max_date = collect(extract_rows_from_container(first_container))
-    print(f"Page 1: matched so far {len(all_matches)}")
-
-    for page_number in range(2, total_pages + 1):
-        html = fetch_page_html(session, page_number)
-        container = get_container(BeautifulSoup(html, "html.parser"))
-        rows = extract_rows_from_container(container)
+    print(f"Jumping to pages {start_page}→{end_page} (of ~{total_pages})")
+    for page_number in range(start_page, end_page + 1):
+        rows, min_date, max_date = _fetch_page_bundle(session, page_number, cache)
         if not rows:
             break
-
-        min_date, max_date = collect(rows)
-        print(f"Page {page_number}: matched so far {len(all_matches)}")
+        _mn, _mx, newest = collect(rows)
+        print(
+            f"Page {page_number} ({min_date}→{max_date}): matched so far {len(all_matches)}"
+        )
         if min_date is not None and min_date < start_date:
             break
+        if after_datetime is not None and newest is not None and newest <= after_datetime:
+            # Remaining rows on later pages are older.
+            if max_date is not None and max_date <= start_date:
+                break
+            # For same-day incremental from page 1, stop once everything is <= watermark.
+            if start_page == 1 and start_date == end_date:
+                break
 
     return all_matches
 

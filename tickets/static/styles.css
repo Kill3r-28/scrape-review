@@ -348,15 +348,24 @@ th {
   padding: 0.25rem;
 }
 .day-cell {
-  display: block;
-  min-height: 92px;
-  padding: 0.55rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 108px;
+  padding: 0.45rem;
   border: 1px solid var(--line-soft);
   border-radius: 12px;
   background: #fff;
   color: inherit;
   text-decoration: none;
+  gap: 0.35rem;
 }
+.day-cell .day-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  flex: 1;
+}
+.day-cell .day-link:hover { text-decoration: none; }
 .day-cell:hover {
   text-decoration: none;
   border-color: rgba(227, 91, 176, 0.35);
@@ -392,6 +401,27 @@ th {
 }
 .open-count { color: #c45f12; }
 .done-count { color: #1f7a4f; }
+.day-update-btn {
+  align-self: stretch;
+  margin: 0;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--line-soft);
+  background: #fff;
+  color: #9d2d7a;
+  cursor: pointer;
+}
+.day-update-btn:hover:not(:disabled) {
+  background: rgba(227, 91, 176, 0.1);
+  border-color: rgba(227, 91, 176, 0.35);
+}
+.day-update-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.calendar-hint { margin: 0 0 0.75rem; }
 
 a.btn-ghost {
   display: inline-flex;

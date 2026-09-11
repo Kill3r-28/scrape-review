@@ -407,21 +407,28 @@ async def admin_update_day(request: Request, db: Session = Depends(get_db)):
     except Exception:  # noqa: BLE001
         body = {}
     day_raw = str((body or {}).get("date", "")).strip()
+    incremental = bool((body or {}).get("incremental", True))
     try:
         target = date.fromisoformat(day_raw)
     except ValueError:
         return JSONResponse({"ok": False, "error": "Invalid date"}, status_code=400)
+    if target > date.today():
+        return JSONResponse({"ok": False, "error": "Cannot update a future date"}, status_code=400)
     try:
-        result = ingest_date(db, target, enrich=True)
-        cursor = advance_ingest_cursor(db, target)
+        result = ingest_date(db, target, enrich=True, incremental=incremental)
+        crit = assign_criticality_all(db, only_missing=True)
         return {
             "ok": True,
             "date": target.isoformat(),
             "created": result.get("created", 0),
+            "updated": result.get("updated", 0),
             "skipped": result.get("skipped", 0),
             "total_rows": result.get("total_rows", 0),
-            "cursor_through": cursor.last_through_date,
-            "cursor_creation": cursor.last_through_creation or None,
+            "incremental": result.get("incremental", False),
+            "after_creation": result.get("after_creation"),
+            "cursor_through": result.get("cursor_through"),
+            "cursor_creation": result.get("cursor_creation"),
+            "criticality_updated": crit.get("updated", 0),
         }
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(

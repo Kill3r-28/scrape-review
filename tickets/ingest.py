@@ -268,14 +268,50 @@ def apply_sme_routing(db: Session) -> int:
     return reassign_open_tickets(db, skip_not_mine=True)
 
 
-def ingest_date(db: Session, target_date: date, *, enrich: bool = True) -> dict[str, int]:
+def newest_creation_for_date(db: Session, target_date: date) -> datetime | None:
+    """Newest parsed Creation datetime among tickets already stored for that day."""
+    best: datetime | None = None
+    rows = (
+        db.query(Ticket.creation_datetime)
+        .filter(Ticket.report_date == target_date.isoformat())
+        .all()
+    )
+    for (raw,) in rows:
+        parsed = parse_creation_datetime((raw or "").strip())
+        if parsed is None:
+            continue
+        if best is None or parsed > best:
+            best = parsed
+    return best
+
+
+def ingest_date(
+    db: Session,
+    target_date: date,
+    *,
+    enrich: bool = True,
+    incremental: bool = True,
+) -> dict[str, int | str | bool | None]:
+    """
+    Scrape + upsert one calendar day.
+    When incremental=True and tickets already exist for that day, only pull reports
+    newer than the newest stored Creation datetime (fast refresh for latest ones).
+    """
     load_dotenv(ENV_PATH)
-    rows = scrape_reports_for_date(target_date)
+    after = newest_creation_for_date(db, target_date) if incremental else None
+    rows = scrape_reports_for_date(target_date, after_datetime=after)
     if enrich and rows:
         session = create_session()
         login_with_django_admin(session)
         rows = enrich_rows(session, rows)
-    return upsert_tickets(db, rows, target_date)
+    result = upsert_tickets(db, rows, target_date)
+    cursor = advance_ingest_cursor(db, target_date)
+    result["report_date"] = target_date.isoformat()
+    result["incremental"] = bool(after is not None)
+    result["after_creation"] = after.isoformat(sep=" ", timespec="minutes") if after else None
+    result["cursor_through"] = cursor.last_through_date
+    result["cursor_creation"] = cursor.last_through_creation or None
+    return result
 
 
 def ingest_date_range(
